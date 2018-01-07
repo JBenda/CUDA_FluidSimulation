@@ -80,7 +80,7 @@ void safeFrame(int num, float* picture, const int res)
 	ss << "frame" << num << ".pnm";
 	output = fopen(ss.str().c_str(), "w");
 	ss.str("");
-	ss << "P2 " << res << ' ' << res << " 255 ";
+	ss << "P5 " << res << ' ' << res << " 255 ";
 	fprintf(output, ss.str().c_str());
 	char c;
 	for (int i = 0; i < res*res; ++i)
@@ -90,7 +90,7 @@ void safeFrame(int num, float* picture, const int res)
 			std::cerr << "ERROR" << std::endl;
 			return;
 		}
-		fprintf(output, "%i ", (int)(picture[i] * 255.f));
+		fprintf(output, "%c", ((int)(picture[i] * 255.f) == '\n' ? (int)(picture[i] * 255.f) + 1 : (int)(picture[i] * 255.f)));
 	}
 	fclose(output);
 }
