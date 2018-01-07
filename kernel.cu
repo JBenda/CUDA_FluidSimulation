@@ -6,10 +6,12 @@
 #include <stdio.h>
 #include <iostream>
 #include <algorithm>
+#include <sstream>
 
 #include "d:\Dokumente\OVGU\GPU\cudaSample\solution\src\cuda_util.h"
 
 cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
+cudaError_t fluidSimulation(const int res, const float diff, const float dt, const int frames);
 
 __global__ void addKernel(int *c, const int *a, const int *b)
 {
@@ -44,13 +46,15 @@ __global__ void diffuseKernel(float *des, float *des_fin, const int res, const f
 		sum += des_fin[(id.y + 1) * res + id.x] - des_fin[id.y * res + id.x];
 	}
 	des[id.y * res + id.x] = des_fin[id.y * res + id.x] + sum * diff * dt;
+	if (des[id.y * res + id.x] < 0.f)
+		des[id.y * res + id.x] = 0.f;
 }
 
 int main()
 {
-	const int res = 500;		//image size, resolution per axis
-	const float diff = 0.2;	//diffusion speed
-	const float dt = 0.1;	//virtual time between to frames
+	const int res = 100;		//image size, resolution per axis
+	const float diff = 0.4f;	//diffusion speed
+	const float dt = 0.5;	//virtual time between to frames
 	const int frames = 100;	//amount of frames to render
 	//const float src = 1;	//denisty in source field;	TODO:Change to field with production speed per tile
 	
@@ -69,6 +73,28 @@ int main()
 
     return 0;
 }
+void safeFrame(int num, float* picture, const int res)
+{
+	FILE *output;
+	std::stringstream ss;
+	ss << "frame" << num << ".pnm";
+	output = fopen(ss.str().c_str(), "w");
+	ss.str("");
+	ss << "P2 " << res << ' ' << res << " 255 ";
+	fprintf(output, ss.str().c_str());
+	char c;
+	for (int i = 0; i < res*res; ++i)
+	{
+		if (picture[i] < 0.f)
+		{
+			std::cerr << "ERROR" << std::endl;
+			return;
+		}
+		fprintf(output, "%i ", (int)(picture[i] * 255.f));
+	}
+	fclose(output);
+}
+
 cudaError_t fluidSimulation(const int res, const float diff, const float dt, const int frames)
 {
 	size_t pixel = res * res;
@@ -79,9 +105,17 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 
 	float *des_start;	//denisty distribution at start
 	des_start = (float*)malloc(pixel * sizeof(float));
-	for (size_t i = (res / 5) * 2; i < (res / 5) * 3; ++i)
-		for (size_t j = (res / 5) * 2; i < (res / 5) * 3; ++j)
-			des_start[i + j * res] = 1;
+	int min = (res / 3);
+	int max = (res / 3)*2;
+	std::cout << "border for img " << min << " " << max << std::endl;
+	for (size_t i = 0; i < res; ++i)
+		for (size_t j = 0; j < res; ++j)
+		{
+			if (i >= min && i <= max && j >= min && j <= max)
+				des_start[i + j * res] = 1.f;
+			else
+				des_start[i + j * res] = 0.f;
+		}
 
 	int deviceCount = 0;
 	cudaGetDeviceCount(&deviceCount);
@@ -110,29 +144,53 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 		goto End;
 	}
 	//TODO:Generate Velocity field
-	cudaStatus = cudaMemset(dev_des, 0, pixel * sizeof(float));
+	cudaStatus = cudaMemset(dev_des, 0.f, pixel * sizeof(float));
 	if (cudaStatus == cudaSuccess)
-		cudaStatus = cudaMemcpy(dev_des_fin, des_start, pixel, cudaMemcpyHostToDevice);
+		cudaStatus = cudaMemcpy(dev_des_fin, des_start, pixel * sizeof(float), cudaMemcpyHostToDevice);
 	if (cudaStatus == cudaSuccess)
-		cudaStatus = cudaMemset(dev_vel, 0, pixel * sizeof(float2));
+		cudaStatus = cudaMemset(dev_vel, 0.f, pixel * sizeof(float2));
 	if (cudaStatus != cudaSuccess)
 	{
 		std::cerr << "initialisation failed!" << std::endl;
 		goto End;
 	}
-	const int MAX_THREADS_PER_BLOCK = 1024;
+	const int MAX_THREADS_PER_BLOCK = 32;	//per dim
 	size_t blocks, threadsPerBlock;
-	threadsPerBlock = std::min((int)pixel, MAX_THREADS_PER_BLOCK);
-	blocks = pixel / MAX_THREADS_PER_BLOCK;
-	if (pixel % MAX_THREADS_PER_BLOCK != 0)
+	threadsPerBlock = std::min((int)res, MAX_THREADS_PER_BLOCK);
+	blocks = res / MAX_THREADS_PER_BLOCK;
+	if (res % MAX_THREADS_PER_BLOCK != 0)
 		blocks++;
-	std::cout << "need " << blocks << " blocks with max " << threadsPerBlock << "per block" << std::endl;
-	diffuseKernel<<< blocks, threadsPerBlock >>>(dev_des, dev_des_fin, res, diff, dt);
+	std::cout << "need " << blocks << " per dim blocks with max " << threadsPerBlock << "per block per dim" << std::endl;
+	float* picture = (float*)malloc(pixel * sizeof(float));
+	dim3 blockSize = dim3(blocks, blocks);
+	dim3 threadSize = dim3(threadsPerBlock, threadsPerBlock);
+	for (size_t frame = 0; frame < frames * 20; ++frame)
+	{
+		std::cout << "strat" << std::endl;
+		diffuseKernel <<<blockSize, threadSize>>> (dev_des, dev_des_fin, res, diff, dt);
+		if (frame % 10 == 0)
+		{
+			cudaStatus = cudaMemcpy(picture, dev_des_fin, pixel * sizeof(float), cudaMemcpyDeviceToHost);
+			if (cudaStatus != cudaSuccess)
+			{
+				std::cerr << "copy frame from device failed!" << std::endl;
+			}
+			safeFrame(frame, picture, res);
+		}
+		cudaStatus = cudaDeviceSynchronize();
+		if (cudaStatus != cudaSuccess) {
+			std::cerr << "diffuseKernel failed!" << std::endl;
+			goto End;
+		}
+		std::swap(dev_des, dev_des_fin);
+	}
 
 End:
 	cudaFree(dev_des);
 	cudaFree(dev_des_fin);
 	cudaFree(dev_vel);
+
+	return cudaStatus;
 }
 cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
 {
