@@ -1,9 +1,13 @@
 
+#include <cuda.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
 #include <stdio.h>
 #include <iostream>
+#include <algorithm>
+
+#include "d:\Dokumente\OVGU\GPU\cudaSample\solution\src\cuda_util.h"
 
 cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
 
@@ -13,6 +17,34 @@ __global__ void addKernel(int *c, const int *a, const int *b)
     c[i] = a[i] + b[i];
 }
 
+__global__ void diffuseKernel(float *des, float *des_fin, const int res, const float diff, const float dt)	//diffusion lässt sich mit einem Faltungsfilter simulieren
+{
+	//ermittlung der Position
+	int2 id;
+	id.x = blockIdx.x * blockDim.x + threadIdx.x;
+	id.y = blockIdx.y * blockDim.y + threadIdx.y;
+
+	if (id.x >= res || id.y >= res)
+		return;
+	float sum = 0.f;
+	if (id.x > 0)
+	{
+		sum += des_fin[id.y * res + id.x - 1] - des_fin[id.y * res + id.x];
+	}
+	if (id.x < res - 1)
+	{
+		sum += des_fin[id.y * res + id.x + 1] - des_fin[id.y * res + id.x];
+	}
+	if (id.y > 0)
+	{
+		sum += des_fin[(id.y - 1) * res + id.x] - des_fin[id.y * res + id.x];
+	}
+	if (id.y < res - 1)
+	{
+		sum += des_fin[(id.y + 1) * res + id.x] - des_fin[id.y * res + id.x];
+	}
+	des[id.y * res + id.x] = des_fin[id.y * res + id.x] + sum * diff * dt;
+}
 
 int main()
 {
@@ -39,9 +71,26 @@ int main()
 }
 cudaError_t fluidSimulation(const int res, const float diff, const float dt, const int frames)
 {
+	size_t pixel = res * res;
+
 	float *dev_des;		//field on Device with informatioon about density
 	float *dev_des_fin;	//last Completed rendert density field
 	float2 *dev_vel;	//field with velocity information		TODO:aproximate Velocity and decress the resolution
+
+	float *des_start;	//denisty distribution at start
+	des_start = (float*)malloc(pixel * sizeof(float));
+	for (size_t i = (res / 5) * 2; i < (res / 5) * 3; ++i)
+		for (size_t j = (res / 5) * 2; i < (res / 5) * 3; ++j)
+			des_start[i + j * res] = 1;
+
+	int deviceCount = 0;
+	cudaGetDeviceCount(&deviceCount);
+	if (0 == deviceCount) {
+		std::cerr << "No CUDA device found." << std::endl;
+	}
+	cudaDeviceProp devProp;
+	cudaGetDeviceProperties(&devProp, 0);
+	printDeviceProps(devProp);
 
 	cudaError_t cudaStatus = cudaSetDevice(0);
 	if (cudaStatus != cudaSuccess) 
@@ -50,7 +99,6 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 		goto End;
 	}
 
-	size_t pixel = res * res;
 	cudaStatus = cudaMalloc((void**)&dev_des, pixel * sizeof(float));
 	if(cudaStatus == cudaSuccess)
 		cudaStatus = cudaMalloc((void**)&dev_des_fin, pixel * sizeof(float));
@@ -63,18 +111,28 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 	}
 	//TODO:Generate Velocity field
 	cudaStatus = cudaMemset(dev_des, 0, pixel * sizeof(float));
-	if(cudaStatus == cudaSuccess)
-		cudaStatus = cudaMemset(dev_des_fin, 0, pixel * sizeof(float));
+	if (cudaStatus == cudaSuccess)
+		cudaStatus = cudaMemcpy(dev_des_fin, des_start, pixel, cudaMemcpyHostToDevice);
 	if (cudaStatus == cudaSuccess)
 		cudaStatus = cudaMemset(dev_vel, 0, pixel * sizeof(float2));
 	if (cudaStatus != cudaSuccess)
 	{
-		std::cerr << "cudaMemset failed!" << std::endl;
+		std::cerr << "initialisation failed!" << std::endl;
 		goto End;
 	}
+	const int MAX_THREADS_PER_BLOCK = 1024;
+	size_t blocks, threadsPerBlock;
+	threadsPerBlock = std::min((int)pixel, MAX_THREADS_PER_BLOCK);
+	blocks = pixel / MAX_THREADS_PER_BLOCK;
+	if (pixel % MAX_THREADS_PER_BLOCK != 0)
+		blocks++;
+	std::cout << "need " << blocks << " blocks with max " << threadsPerBlock << "per block" << std::endl;
+	diffuseKernel<<< blocks, threadsPerBlock >>>(dev_des, dev_des_fin, res, diff, dt);
 
 End:
-	//free all
+	cudaFree(dev_des);
+	cudaFree(dev_des_fin);
+	cudaFree(dev_vel);
 }
 cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
 {
