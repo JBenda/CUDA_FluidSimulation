@@ -83,6 +83,31 @@ __global__ void pressVelKernel(float* vel_x, float*  vel_y, float* p, const int 
 	if (vel_y[i] < -1.f)
 		vel_y[i] = -1.f;
 }
+enum POSITION {TOP, LEFT, RIGHT, BOTTOM};
+//TODO pos , dt and one vel are enoug informations
+__device__ float denistyLag(POSITION pos, float vel_x, float vel_y, const float dt)
+{
+	switch (pos)
+	{
+	case TOP:
+		if (vel_y < 0.f)
+			return vel_y * dt;
+		break;
+	case LEFT:
+		if (vel_x < 0.f)
+			return vel_x * dt;
+		break;
+	case RIGHT:
+		if (vel_x > 0.f)
+			return vel_x * dt;
+		break;
+	case BOTTOM:
+		if (vel_y > 0.f)
+			return vel_y * dt;
+		break;
+	}
+	return 0.f;
+}
 __global__ void advectKernel(float *des, float* des_fin, float* vel_x, float* vel_y, const int res, const float dt)	//berchnen wie viel prozent von welcher Zelle nach dt in der aktuellen Zelle landet
 {
 	int2 id;
@@ -111,8 +136,14 @@ __global__ void advectKernel(float *des, float* des_fin, float* vel_x, float* ve
 		des[id.x + id.y * res] = des_fin[id.x + id.y * res];
 		if ((id.x != 0 || dx != -1) && (id.x != res - 1 || dx != 1))
 			des[id.x + id.y * res] += des_fin[id.x + dx + id.y * res] * d.x * (1.f - d.y);
+		else
+			des[id.x + id.y * res] -= des_fin[id.x - dx + id.y * res] * denistyLag(dx == -1 ? POSITION::RIGHT : POSITION::LEFT, vel_x[id.x - dx + id.y * res], vel_y[id.x - dx + id.y * res], dt);
+
 		if ((id.y != 0 || dy != -1) && (id.y != res - 1 || dy != 1))
 			des[id.x + id.y * res] += des_fin[id.x + (id.y + dy) * res] * (1.f - d.x) * d.y;
+		else
+			des[id.x + id.y * res] -= des_fin[id.x + (id.y - dy) * res] * denistyLag(dy == -1 ? POSITION::TOP : POSITION::BOTTOM, vel_x[id.x + (id.y - dy) * res], vel_y[id.x + (id.y - dy) * res], dt);
+
 		if ((id.y != 0 || dy != -1) && (id.y != res - 1 || dy != 1) && (id.x != 0 || dx != -1) && (id.x != res - 1 || dx != 1))
 			des[id.x + id.y * res] += des_fin[id.x + dx + (id.y + dy) * res] * d.x * d.y;
 	}
