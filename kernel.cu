@@ -12,13 +12,24 @@
 
 #include "d:\Dokumente\OVGU\GPU\cudaSample\solution\src\cuda_util.h"
 
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
 cudaError_t fluidSimulation(const int res, const float diff, const float dt, const int frames);
 std::atomic_bool copyDevDesFin(false);
-__global__ void addKernel(int *c, const int *a, const int *b)
+__global__ void addVelKernel(float* vel_x, float* vel_y, float* vel_src_x, float* vel_src_y, const float dt, const int res)
 {
-    int i = threadIdx.x;
-    c[i] = a[i] + b[i];
+	int2 id;
+	id.x= blockIdx.x * blockDim.x + threadIdx.x;
+	id.y= blockIdx.y * blockDim.y + threadIdx.y;
+	int i = id.x + id.y * res;
+	vel_x[i] += dt * vel_src_x[i];
+	if (vel_x[i] > 1.f)
+		vel_x[i] = 1.f;
+	if (vel_x[i] < -1.f)
+		vel_x[i] = -1.f;
+	vel_y[i] += dt * vel_src_y[i];
+	if (vel_y[i] > 1.f)
+		vel_y[i] = 1.f;
+	if (vel_y[i] < -1.f)
+		vel_y[i] = -1.f;
 }
 __global__ void advectKernel(float *des, float* des_fin, float* vel_x, float* vel_y, const int res, const float dt)	//berchnen wie viel prozent von welcher Zelle nach dt in der aktuellen Zelle landet
 {
@@ -47,11 +58,12 @@ __global__ void advectKernel(float *des, float* des_fin, float* vel_x, float* ve
 		dy = -1;
 		d.y = -d.y;
 	}
-
 	des[id.x + id.y * res] = des_fin[id.x + id.y * res] * (1.f - d.x) * (1.f - d.y)
 		+ des_fin[id.x + dx + id.y * res] * d.x * (1.f - d.y)
 		+ des_fin[id.x + (id.y + dy) * res] * (1.f - d.x) * d.y
-		+ des_fin[id.x + dx + (id.y + dy) * res] + d.x * d.y;
+		+ des_fin[id.x + dx + (id.y + dy) * res] * d.x * d.y;
+	if (id.x == 0 || id.x == res - 1 || id.y == 0 || id.y == res - 1)
+		des[id.x + id.y * res] = des_fin[id.x + id.y * res] * d.x * d.y;
 }
 __global__ void diffuseKernel(float *des, float *des_fin, const int res, const float diff, const float dt)	//diffusion lässt sich mit einem Faltungsfilter simulieren
 {
@@ -80,16 +92,18 @@ __global__ void diffuseKernel(float *des, float *des_fin, const int res, const f
 		sum += des_fin[(id.y + 1) * res + id.x] - des_fin[id.y * res + id.x];
 	}
 	des[id.y * res + id.x] = des_fin[id.y * res + id.x] + sum * diff * dt;
-	if (des[id.y * res + id.x] < 0.f)
-		des[id.y * res + id.x] = 0.f;
+	//if (des[id.y * res + id.x] < 0.f)
+	//	des[id.y * res + id.x] = 0.f;
+	if (des[id.y * res + id.x] > 1.f)
+		des[id.y * res + id.x] = 1.f;
 }
 
 int main()
 {
-	const int res = 500;		//image size, resolution per axis
+	const int res = 150;		//image size, resolution per axis
 	const float diff = 0.4f;	//diffusion speed
 	const float visc = 0.7f;	//viscosity 
-	const float dt = 0.5;	//virtual time between to frames
+	const float dt = 0.3;	//virtual time between to frames
 	const int frames = 20;	//amount of frames to render
 	//const float src = 1;	//denisty in source field;	TODO:Change to field with production speed per tile
 	
@@ -147,16 +161,28 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 	float *dev_vel_y_fin;
 	float *des_start;	//denisty distribution at start
 	float *dev_des_src;	//particel sources
-	float *dev_vel_src;	//velocity sources
-	float *vel_src;
-	vel_src = (float*)malloc(pixel * sizeof(float));
-
+	float *dev_vel_src_x;	//velocity sources
+	float *dev_vel_src_y;
+	float *vel_src_x;
+	float *vel_src_y;
+	vel_src_x = (float*)malloc(pixel * sizeof(float));
+	vel_src_y = (float*)malloc(pixel * sizeof(float));
+	int center = res / 2;
+	for(size_t j = 0; j < res; ++j)
+		for (size_t i = 0; i < res; ++i)
+		{
+			if (std::abs((int)i - center) < 20 && std::abs((int)j - center) < 20)
+				vel_src_y[j * res + i] = -1.f;
+			else
+				vel_src_y[j * res + i] = 0.f;
+			vel_src_x[j * res + i] = 0.f;
+		}
 	des_start = (float*)malloc(pixel * sizeof(float));
-	int min = (res / 3);
-	int max = (res / 3)*2;
+	int min = (res / 4)*2;
+	int max = (res / 4)*3;
 	std::cout << "border for img " << min << " " << max << std::endl;
-	for (size_t i = 0; i < res; ++i)
-		for (size_t j = 0; j < res; ++j)
+	for (size_t j = 0; j < res; ++j)
+		for (size_t i = 0; i < res; ++i)
 		{
 			if (i >= min && i <= max && j >= min && j <= max)
 				des_start[i + j * res] = 1.f;
@@ -192,13 +218,19 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 	if (cudaStatus == cudaSuccess)
 		cudaStatus = cudaMalloc((void**)&dev_vel_y_fin, pixel * sizeof(float));
 	if (cudaStatus == cudaSuccess)
-		cudaStatus = cudaMalloc((void**)&dev_vel_src, pixel * sizeof(float));
+		cudaStatus = cudaMalloc((void**)&dev_vel_src_x, pixel * sizeof(float));
+	if (cudaStatus == cudaSuccess)
+		cudaStatus = cudaMalloc((void**)&dev_vel_src_y, pixel * sizeof(float));
 	if (cudaStatus != cudaSuccess)
 	{
 		std::cerr << "cudaMalloc failed!" << std::endl;
 	}
 	//TODO:Generate Velocity field
 	cudaStatus = cudaMemcpy(dev_des_fin, des_start, pixel * sizeof(float), cudaMemcpyHostToDevice);
+	if (cudaStatus == cudaSuccess)
+		cudaStatus = cudaMemcpy(dev_vel_src_x, vel_src_x, pixel * sizeof(float), cudaMemcpyHostToDevice);
+	if (cudaStatus == cudaSuccess)
+		cudaStatus = cudaMemcpy(dev_vel_src_y, vel_src_y, pixel * sizeof(float), cudaMemcpyHostToDevice);
 	if (cudaStatus == cudaSuccess)
 		cudaStatus = cudaMemset(dev_vel_x_fin, 0, pixel * sizeof(float));
 	if (cudaStatus == cudaSuccess)
@@ -218,37 +250,42 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 	dim3 blockSize = dim3(blocks, blocks);
 	dim3 threadSize = dim3(threadsPerBlock, threadsPerBlock);
 	std::thread safePicThread;
-	for (size_t frame = 0; frame < frames * 20; ++frame)
+	for (size_t frame = 0; frame < frames * 40; ++frame)
 	{
+		addVelKernel << <blockSize, threadSize>> > (dev_vel_x_fin, dev_vel_y_fin, dev_vel_src_x, dev_vel_src_y, dt, res);
+		cudaStatus = cudaDeviceSynchronize();
+		
 		std::cout << "strat " << frame << std::endl;
-		diffuseKernel <<<blockSize, threadSize>>> (dev_des, dev_des_fin, res, diff, dt);
-		diffuseKernel <<<blockSize, threadSize>>> (dev_vel_x, dev_vel_x_fin, res, diff, dt);
-		diffuseKernel <<<blockSize, threadSize>>> (dev_vel_y, dev_vel_y_fin, res, diff, dt);
-		if (frame % 20 == 0)
+		if (frame % 40 == 0)
 		{
 			if(safePicThread.joinable())
 				safePicThread.join();
 			copyDevDesFin = true;
 			safePicThread = std::thread(safeFrame, frame, picture, dev_des_fin, res);
 		}
-		cudaStatus = cudaDeviceSynchronize();
-		if (cudaStatus != cudaSuccess) {
-			std::cerr << "diffuseKernel failed!" << std::endl;
-		}
-		while (copyDevDesFin);
-		std::swap(dev_des, dev_des_fin);
-		std::swap(dev_vel_x, dev_vel_x_fin);
-		std::swap(dev_vel_y, dev_vel_y_fin);
 
-		advectKernel <<<blockSize, threadSize>>> (dev_des, dev_des_fin, dev_vel_x_fin, dev_vel_y_fin, res, dt);
+		advectKernel << <blockSize, threadSize >> > (dev_des, dev_des_fin, dev_vel_x_fin, dev_vel_y_fin, res, dt);
 		//TODO: more realistic velocity
-		advectKernel <<<blockSize, threadSize>>> (dev_vel_x, vel_x_fin, dev_vel_x_fin, dev_vel_y_fin, res, dt);
+		advectKernel <<<blockSize, threadSize>>> (dev_vel_x, dev_vel_x_fin, dev_vel_x_fin, dev_vel_y_fin, res, dt);
 		advectKernel <<<blockSize, threadSize>>> (dev_vel_y, dev_vel_y_fin, dev_vel_x_fin, dev_vel_y_fin, res, dt);
 
 		cudaStatus = cudaDeviceSynchronize();
 		if (cudaStatus != cudaSuccess) {
 			std::cerr << "advect Kernel failed!" << std::endl;
 		}
+		std::swap(dev_des, dev_des_fin);
+		std::swap(dev_vel_x, dev_vel_x_fin);
+		std::swap(dev_vel_y, dev_vel_y_fin);
+
+		diffuseKernel << <blockSize, threadSize >> > (dev_des, dev_des_fin, res, diff, dt);
+		diffuseKernel << <blockSize, threadSize >> > (dev_vel_x, dev_vel_x_fin, res, diff, dt);
+		diffuseKernel << <blockSize, threadSize >> > (dev_vel_y, dev_vel_y_fin, res, diff, dt);
+		cudaStatus = cudaDeviceSynchronize();
+		if (cudaStatus != cudaSuccess) {
+			std::cerr << "diffuseKernel failed!" << std::endl;
+		}
+
+		while (copyDevDesFin);
 		std::swap(dev_des, dev_des_fin);
 		std::swap(dev_vel_x, dev_vel_x_fin);
 		std::swap(dev_vel_y, dev_vel_y_fin);
@@ -262,82 +299,4 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 	cudaFree(dev_vel_y_fin);
 
 	return cudaStatus;
-}
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
-{
-    int *dev_a = 0;
-    int *dev_b = 0;
-    int *dev_c = 0;
-    cudaError_t cudaStatus;
-
-    // Choose which GPU to run on, change this on a multi-GPU system.
-    cudaStatus = cudaSetDevice(0);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-        goto Error;
-    }
-
-    // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    // Copy input vectors from host memory to GPU buffers.
-    cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-    // Launch a kernel on the GPU with one thread for each element.
-    addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
-
-    // Check for any errors launching the kernel
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-        goto Error;
-    }
-    
-    // cudaDeviceSynchronize waits for the kernel to finish, and returns
-    // any errors encountered during the launch.
-    cudaStatus = cudaDeviceSynchronize();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-        goto Error;
-    }
-
-    // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(int), cudaMemcpyDeviceToHost);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-Error:
-    cudaFree(dev_c);
-    cudaFree(dev_a);
-    cudaFree(dev_b);
-    
-    return cudaStatus;
 }
