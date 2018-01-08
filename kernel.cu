@@ -71,13 +71,13 @@ __global__ void pressVelKernel(float* vel_x, float*  vel_y, float* p, const int 
 	if (id.x >= res || id.y >= res)
 		return;
 	int i = id.x + id.y * res;
-	vel_x[i] = 0.9f;// (p[i + 1] - p[i - 1]) *dt;		//IMP
+	vel_x[i] += (p[i + 1] - p[i - 1]) * dt;		//IMP
 	if (vel_x[i] > 1.f)
 		vel_x[i] = 1.f;
 	if (vel_x[i] < -1.f)
 		vel_x[i] = -1.f;
 
-	vel_y[i] = 0.9f;//(p[i + res] - p[i - res]) *dt;
+	vel_y[i] += (p[i + res] - p[i - res]) * dt;
 	if (vel_y[i] > 1.f)
 		vel_y[i] = 1.f;
 	if (vel_y[i] < -1.f)
@@ -92,8 +92,8 @@ __global__ void advectKernel(float *des, float* des_fin, float* vel_x, float* ve
 		return;
 	
 	float2 d;		//travelle way from the now center Particel
-	d.x = -0.3f;//- dt * vel_x[id.y * res + id.x];	//det * vel < 0.5 !!
-	d.y = -0.03f;// -dt * vel_y[id.y * res + id.x];
+	d.x = - dt * vel_x[id.y * res + id.x];	//det * vel < 0.5 !!
+	d.y = -dt * vel_y[id.y * res + id.x];
 
 	int dx = 1, dy = 1;
 	if (d.x < 0.f)
@@ -108,10 +108,13 @@ __global__ void advectKernel(float *des, float* des_fin, float* vel_x, float* ve
 	}
 	if (id.x == 0 || id.x == res - 1 || id.y == 0 || id.y == res - 1)	//boundarey, no fluid leg
 	{
-		des[id.x + id.y * res] = des_fin[id.x + id.y * res]
-			+ des_fin[id.x + dx + id.y * res] * d.x * (1.f - d.y)
-			+ des_fin[id.x + (id.y + dy) * res] * (1.f - d.x) * d.y
-			+ des_fin[id.x + dx + (id.y + dy) * res] * d.x * d.y;
+		des[id.x + id.y * res] = des_fin[id.x + id.y * res];
+		if ((id.x != 0 || dx != -1) && (id.x != res - 1 || dx != 1))
+			des[id.x + id.y * res] += des_fin[id.x + dx + id.y * res] * d.x * (1.f - d.y);
+		if ((id.y != 0 || dy != -1) && (id.y != res - 1 || dy != 1))
+			des[id.x + id.y * res] += des_fin[id.x + (id.y + dy) * res] * (1.f - d.x) * d.y;
+		if ((id.y != 0 || dy != -1) && (id.y != res - 1 || dy != 1) && (id.x != 0 || dx != -1) && (id.x != res - 1 || dx != 1))
+			des[id.x + id.y * res] += des_fin[id.x + dx + (id.y + dy) * res] * d.x * d.y;
 	}
 	else
 	{
@@ -160,7 +163,7 @@ int main()
 	const float diff = 0.4f;	//diffusion speed
 	const float visc = 0.7f;	//viscosity 
 	const float dt = 0.3;	//virtual time between to frames
-	const int frames = 20;	//amount of frames to render
+	const int frames = 50;	//amount of frames to render
 	//const float src = 1;	//denisty in source field;	TODO:Change to field with production speed per tile
 	
 	cudaError_t cudaStatus = fluidSimulation(res, diff, dt, frames);
@@ -236,14 +239,14 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 		}
 	
 	des_start = (float*)malloc(pixel * sizeof(float));
-	int min = (res / 7)*3;
-	int max = (res / 7)*4;
+	int min = (res / 15)*7;
+	int max = (res / 15)*8;
 	std::cout << "border for img " << min << " " << max << std::endl;
 	for (size_t j = 0; j < res; ++j)
 		for (size_t i = 0; i < res; ++i)
 		{
 			if (i >= min && i <= max && j >= min && j <= max)
-				des_start[i + j * res] = 1.f;
+				des_start[i + j * res] = .6f;
 			else
 				des_start[i + j * res] = 0.f;
 
@@ -314,7 +317,7 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 	dim3 blockSize = dim3(blocks, blocks);
 	dim3 threadSize = dim3(threadsPerBlock, threadsPerBlock);
 	std::thread safePicThread;
-	const int STEPS_BETWEEN_FRAMES = 80;
+	const int STEPS_BETWEEN_FRAMES = 10;
 	float *dev_p, *dev_diff;		//field to save vel diff and presuare temp
 	for (size_t frame = 0; frame <= frames * STEPS_BETWEEN_FRAMES; ++frame)
 	{
@@ -343,7 +346,6 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 		//1. Calculate vel diff
 		//2. Calculate preser from this
 		//3. Change vel						TODO: make more effizient
-		
 		dev_p = dev_vel_y;				//dev_vel_y..Buffer field to temp save pressuar
 		dev_diff = dev_vel_x;			//dev_vel_x..Buffer Field
 		velDiffKernel << <blockSize, threadSize >> > (dev_vel_x_fin, dev_vel_y_fin, dev_diff, res);
@@ -354,17 +356,6 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 		cudaStatus = cudaDeviceSynchronize();
 		if (cudaStatus != cudaSuccess) {
 			std::cerr << "presuerCalculation failed!" << std::endl;
-			cudaStatus = cudaMemcpy(des_start, dev_p, pixel * sizeof(float), cudaMemcpyDeviceToHost);
-			for (int i = 0; i < pixel; ++i)
-			{
-				std::cout << des_start[i] << " ";
-				if ((i + 1) % res == 0)
-					std::cout << std::endl;
-			}
-			safePicThread.join();
-			char c;
-			std::cin >> c;
-			return cudaStatus;
 		}
 		advectKernel << <blockSize, threadSize >> > (dev_des, dev_des_fin, dev_vel_x_fin, dev_vel_y_fin, res, dt);
 		advectKernel <<<blockSize, threadSize>>> (dev_vel_x, dev_vel_x_fin, dev_vel_x_fin, dev_vel_y_fin, res, dt);
