@@ -113,10 +113,16 @@ __global__ void advectKernel(float *des, float* des_fin, float* vel_x, float* ve
 		des[id.x + id.y * res] = des_fin[id.x + id.y * res] * (1.f - d.x) * (1.f - d.y);
 		if ((id.x != 0 || dx != -1) && (id.x != res - 1 || dx != 1))
 			des[id.x + id.y * res] += des_fin[id.x + dx + id.y * res] * d.x * (1.f - d.y);
+		//else
+		//	des[id.x + id.y * res] -= des_fin[id.x + id.y * res] * d.x * (1.f - d.y);
 		if ((id.y != 0 || dy != -1) && (id.y != res - 1 || dy != 1))
 			des[id.x + id.y * res] += des_fin[id.x + (id.y + dy) * res] * (1.f - d.x) * d.y;
+		//else
+		//	des[id.x + id.y * res] -= des_fin[id.x + id.y * res] * (1.f - d.x) * d.y;
 		if ((id.y != 0 || dy != -1) && (id.y != res - 1 || dy != 1) && (id.x != 0 || dx != -1) && (id.x != res - 1 || dx != 1))
 			des[id.x + id.y * res] += des_fin[id.x + dx + (id.y + dy) * res] * d.x * d.y;
+		//else
+		//	des[id.x + id.y * res] -= des_fin[id.x + id.y * res] * d.x * d.y;
 	}
 	else
 	{
@@ -205,7 +211,7 @@ void safeFrame(int num, float* picture, float* dev_picture, const int res)	//ver
 			std::cerr << "ERROR" << std::endl;
 			return;
 		}
-		fprintf(output, "%c", ((int)(picture[i] * 255.f) == '\n' ? (int)(picture[i] * 255.f) + 1 : (int)(picture[i] * 255.f)));
+		fprintf(output, "%c", (255 - (int)(picture[i] * 255.f) == '\n' ? 255 - (int)(picture[i] * 255.f) + 1 : 255 - (int)(picture[i] * 255.f)));
 	}
 	fclose(output);
 }
@@ -233,8 +239,8 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 	for(size_t j = 0; j < res; ++j)
 		for (size_t i = 0; i < res; ++i)
 		{
-			if (std::abs((int)i - center) < 20 && std::abs((int)j - center) < 20)
-				vel_src_y[j * res + i] = -1.f;
+			if (std::abs((int)j - center) < 2 && std::abs((int)i - center) < 10)
+				vel_src_y[j * res + i] = -0.8f;
 			else
 				vel_src_y[j * res + i] = 0.f;
 			vel_src_x[j * res + i] = 0.f;
@@ -247,8 +253,8 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 	for (size_t j = 0; j < res; ++j)
 		for (size_t i = 0; i < res; ++i)
 		{
-			if (i >= min && i <= max && j >= min && j <= max)
-				des_start[i + j * res] = .6f;
+			if (std::abs((int)j - center) < 2 && std::abs((int)i - center) < 10)
+				des_start[i + j * res] = .1f;
 			else
 				des_start[i + j * res] = 0.f;
 
@@ -319,11 +325,11 @@ cudaError_t fluidSimulation(const int res, const float diff, const float dt, con
 	dim3 blockSize = dim3(blocks, blocks);
 	dim3 threadSize = dim3(threadsPerBlock, threadsPerBlock);
 	std::thread safePicThread;
-	const int STEPS_BETWEEN_FRAMES = 50;
+	const int STEPS_BETWEEN_FRAMES = 30;
 	float *dev_p, *dev_diff;		//field to save vel diff and presuare temp
 	for (size_t frame = 0; frame <= frames * STEPS_BETWEEN_FRAMES; ++frame)
 	{
-		std::cout << "strat " << frame << std::endl;
+		//std::cout << "strat " << frame << std::endl;
 		if (frame % STEPS_BETWEEN_FRAMES == 0)
 		{
 			if(safePicThread.joinable())
