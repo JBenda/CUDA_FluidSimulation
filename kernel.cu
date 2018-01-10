@@ -11,7 +11,6 @@
 #include <thread>
 
 #include "d:\Dokumente\OVGU\GPU\cudaSample\solution\src\cuda_util.h"
-
 cudaError_t fluidSimulation(const int res, const float diff, const float dt, const int frames);
 std::atomic_bool copyDevDesFin(false);
 __global__ void addSrcKernel(float* vel_x, float* vel_y, float* des, float* vel_src_x, float* vel_src_y, float* des_src, const float dt, const int res)
@@ -167,27 +166,83 @@ __global__ void diffuseKernel(float *des, float *des_fin, const int res, const f
 
 int main()
 {
-	const int res = 150;		//image size, resolution per axis
-	const float diff = 0.1f;	//diffusion speed
-	const float visc = 0.7f;	//viscosity 
-	const float dt = 0.3;	//virtual time between to frames
-	const int frames = 50;	//amount of frames to render
-	//const float src = 1;	//denisty in source field;	TODO:Change to field with production speed per tile
-	
-	cudaError_t cudaStatus = fluidSimulation(res, diff, dt, frames);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addWithCuda failed!");
-        return 1;
-    }
-    // cudaDeviceReset must be called before exiting in order for profiling and
-    // tracing tools such as Nsight and Visual Profiler to show complete traces.
-    cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceReset failed!");
-        return 1;
-    }
-
+	const int2 res = { 500, 300 };//pic resolution
+	const int n = 500; //amount of Particle
+	const float p = 0.3f; //how mch room is filled with fluid
+	const float dt = 0.3f;		//time between animation steps
+	const float visc = 0.8f;	//visosity		//F=-visc*dv.x/d(p1, p2).x
+	const float g = 0.9f;		//gravity
+	const float r = std::sqrt(p / (float) n);		//particle radius
+	const float sf = 0.5f;		//value define distance between surface and particle
     return 0;
+}
+float temperatur(float x1, float y1, float x2, float y2)	//calculate temp on p1 when p2 is a heat source
+{
+	return 0.f;
+}
+void bounc(float2 *f, float pos_x, float pos_y, float f_pos_x, float f_pos_y)
+{
+	float dx = std::abs(pos_x - f_pos_x), dy = std::abs(pos_y - f_pos_y);
+	float force = 1.f / (dx*dx + dy*dy);
+	force /= (dx + dy);
+	(*f).x += force * dx;
+	(*f).y += force * dy;
+}
+void sphFluidSimulationCPU(const float2 res, const int n, const float dt, const float visc, const float g, const float r, const float sf)
+{
+	float *par_vel_x;		//velocity from Particle
+	float *par_vel_y;
+	float *par_vel_x_tmp;
+	float *par_vel_y_tmp;
+	float *par_pos_x;		//position particle
+	float *par_pos_y;
+	float *par_pos_x_tmp;
+	float *par_pos_y_tmp;
+
+	//calculate force on Particle
+	for (int i = 0; i < n; ++i)
+	{
+		float2 f = {0.f, g};
+		int amountN;		//amount nightbour
+		int *nei;			//nighbour			partice in interactionrad bzw d(p1, p2) < 2*r
+		for (int k = 0; k < amountN; ++k)
+		{
+			f.x += visc * (par_vel_x[nei[k]] - par_vel_x[i]) * std::abs(par_pos_y[nei[k]] - par_pos_y[i]);
+			f.y += visc * (par_vel_y[nei[k]] - par_vel_y[i]) * std::abs(par_pos_x[nei[k]] - par_pos_x[i]);
+			bounc(&f, par_pos_x[i], par_pos_y[i], par_pos_x[nei[k]], par_pos_y[nei[k]]);					//calculate bounce force
+		}
+		f.x *= dt;	//f * t / m = dv, m = 1 => f * t = dv
+		f.y *= dt;
+		par_vel_x_tmp[i] = par_vel_x[i] + f.x;
+		par_vel_y_tmp[i] = par_vel_y[i] + f.y;
+
+		par_pos_x_tmp[i] = par_vel_x_tmp[i] * dt;
+		par_pos_y_tmp[i] = par_vel_y_tmp[i] * dt;
+	}
+	std::swap(par_pos_x_tmp, par_pos_x);
+	std::swap(par_pos_x_tmp, par_pos_x);
+	std::swap(par_pos_x_tmp, par_pos_x);
+	std::swap(par_pos_x_tmp, par_pos_x);
+	float temp;
+	float step = 1.f/(float)std::min(res.x, res.y);
+	std::stringstream ss;
+	ss.str("P1 ");
+	ss << res.x << ' ' << res.y;
+	for (int i = 0; i < res.y; ++i)
+	{
+		for (int j = 0; j < res.x; ++j)
+		{
+			temp = 0.f;
+			for (int p = 0; p < n; ++p)
+			{
+				temp += temperatur((float)i*step, (float)j*step, par_pos_x[p], par_pos_y[p]);
+			}
+			if (temp >= sf)
+				ss << " 1";
+			else
+				ss << " 0";
+		}
+	}
 }
 void safeFrame(int num, float* picture, float* dev_picture, const int res)	//very slow
 {
