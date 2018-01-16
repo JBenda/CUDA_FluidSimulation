@@ -6,7 +6,6 @@
 #include <memory>
 #include <windows.h>
 #include <WinUser.h>
-#include "resource.h"
 
 struct float2 {
 	void operator+=(const float2& add)
@@ -45,15 +44,15 @@ struct float2 {
 
 HINSTANCE hInst;
 LRESULT CALLBACK WindProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
-const int res[] = { 200, 100 };
+const int res[] = { 100, 50 };
 const float a = res[0] * res[1];
 #define n 2 //amount of Particle
 const float p = 0.3f; //how mch room is filled with fluid
 const float visc = 0.8f;	//visosity		//F=-visc*dv.x/d(p1, p2).x
 const float g = 0.9f;		//gravity
 const float r = 1;// std::sqrt(p * a / (float)n);		//particle radius
-const int frameTimeMs = 25;
-const float dt = 0.025f;		//time between animation steps
+const int frameTimeMs = 20;
+const float dt = 0.02f;		//time between animation steps
 BYTE *pic;
 size_t bytePerLine;
 float2 pos[n];
@@ -66,7 +65,7 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	for (int i = 0; i < n; ++i)
 	{
 		pos[i] = {(float)(i % res[0])*40, float(i / res[0])};
-		vel[i] = {i==0? 20.f: 1.f, 0.f};
+		vel[i] = {i==0? 5.f: -1.f, 0.f};
 	}
 	WNDCLASSEX  WndCls;
 	static char szAppName[] = "BitmapIntro";
@@ -140,20 +139,22 @@ void checkBound(int id)
 void physik(int id)
 {
 	float2 force = { 0.f, 0.f };
-	force.y = 0.2f;
+	force.y = 0.9f;
 	float absF;
 	for (int i = 0; i < n; ++i)
 	{
 		if (i == id) continue;
 		float2 d;
 		d = pos[id] - pos[i];
-		if (std::abs(d.x )< 1 && d.sq() > 0)	//in radius
+		if (std::abs(d.x) < 5 && d.sq() > 0)//in radius
 		{
-			if((d.x > 0 && vel[i].x > 0) || (d.x < 0 && vel[i].x < 0))
-				force.x = (vel[i].x  - vel[id].x);
+			if (d.x > 0)
+				force.x = -100 + (d.x*d.x);
+			else
+				force.x = 100 - (d.x * d.x);
 		}
 	}
-	velN[id] = vel[id] + force;
+	velN[id] = vel[id] + force * dt;
 	posN[id] = pos[id] + vel[id] * dt;
 	checkBound(id);
 }
