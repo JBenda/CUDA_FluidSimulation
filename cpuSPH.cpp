@@ -2,12 +2,15 @@
 #include <stdlib.h>
 #include <algorithm>
 #include <iostream>
+#include <sstream>
 #include <vector>
 #include <memory>
 #include <windows.h>
 #include <WinUser.h>
 #include <math.h>
-
+#include <intrin.h>
+#include <atomic>
+std::atomic_bool drawing = false;
 struct float2 {
 	void operator+=(const float2& add)
 	{
@@ -61,7 +64,7 @@ HINSTANCE hInst;
 LRESULT CALLBACK WindProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 const int res[] = { 100, 50 };
 const float a = res[0] * res[1];
-#define n 6 //amount of Particle
+#define n 100//amount of Particle
 const float p = 0.3f; //how mch room is filled with fluid
 const float visc = 0.8f;	//visosity		//F=-visc*dv.x/d(p1, p2).x
 const float g = 0.9f;		//gravity
@@ -69,6 +72,8 @@ const float r = 3;// std::sqrt(p * a / (float)n);		//particle radius
 const int frameTimeMs = 20;
 const float dt = 0.02f;		//time between animation steps
 const float roh0 = 1.f;
+const float c = 250.f;
+const float bD = 0.f;	//dämpfungsfactor für colliion mit der wand
 BYTE *pic;
 size_t bytePerLine;
 float2 pos[n];
@@ -78,21 +83,16 @@ float2 velN[n];
 float2 dVel[n];
 float  rho[n];
 float  rhoN[n];
-byte   map[(n/8 + 1) * (n/8 + 1)]; //bit map for neighbor
+byte   map[(n/8 + 1) * n]; //bit map for neighbor
 INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	LPSTR lpCmdLine, int nCmdShow)
 {
 	for (int i = 0; i < n; ++i)
 	{
-		pos[i] = {(float)(i % 2)*10 + 10, (float) i / 2 * 5};
+		pos[i] = {(float)(i * 2 / res[1]), (float)(i % (res[1] / 2) * 2 + 2)};
 		rho[i] = 1.f;
+		vel[i] = { 0.f, 0.f };
 	}
-	vel[0] = {0.f, 0.f};
-	vel[1] = { -2.f ,0.f };
-	vel[2] = { 5.f, 0.f };
-	vel[3] = { -2.f, 0.f };
-	vel[4] = { 3.f, 0.f };
-	vel[5] = { -4.f, 0.f};
 	WNDCLASSEX  WndCls;
 	static char szAppName[] = "BitmapIntro";
 	MSG         Msg;
@@ -152,7 +152,9 @@ float getVisc(int id1, int id2)
 	float2 dPos = pos[id1] - pos[id2];
 	if (dVel.x * dPos.x < 0 && dVel.y * dPos.y < 0)
 	{
-		return dVel * dPos / (dPos * dPos);
+		float v = dVel * dPos / (dPos * dPos) * r;
+		float rhoQ = (rho[id1] + rho[id2]) * 0.5f;
+		return (-c*v + v*v) / rhoQ;
 	}
 	return 0.f;
 }
@@ -188,10 +190,9 @@ float deltaW(int id1, int id2)
 	else
 		return 0.f;
 }
-const float c = 250.f;
 float cacPresRho(int id)
 {
-	float r = c*c * (rho[id] - roh0);
+	float r = - c*c * (rho[id] - roh0);
 	if (rho[id] / roh0 < 0.9f)
 		return 0.f;
 	else return r;
@@ -201,14 +202,17 @@ float2 deltaVel(int id)
 	const int w = n / 8 + 1; //map width
 	dVel[id] = { 0.f, 0.f};
 	float pr = cacPresRho(id);
+	float rhoSq = rho[id] * rho[id];
+
+	dVel[id].y = g;
+	bool xBlocked = false;
+	bool yBlocked = false;
 	for (int i = 0; i < n; ++i)
 	{
-		if (map[id * w + i / 8] & (0x01 << (i % 8)))
+		if (map[id * w + i / 8] & (0x80 >> (i % 8)))
 		{
-			if(vel[i].x != 0)
-				dVel[id].x = rho[id] * (pr + cacPresRho(i) + getVisc(id, i)) * deltaW(id, i) / vel[i].x;
-			if(vel[i].y != 0)
-				dVel[id].y = rho[id] * (pr + cacPresRho(i) + getVisc(id, i)) * deltaW(id, i) / vel[i].y;
+				dVel[id].x += roh0 * (pr + cacPresRho(i) + getVisc(id, i)) * deltaW(id, i);
+				dVel[id].y += roh0 * (pr + cacPresRho(i) + getVisc(id, i)) * deltaW(id, i);
 		}
 	}
 	return dVel[id];
@@ -219,9 +223,12 @@ float2 deltaPos(int id)
 	float2 d = { 0.f, 0.f };
 	for (int i = 0; i < n; ++i)
 	{
-		if (map[id * w + i / 8] & (0x01 << (i % 8)))
+		if (map[id * w + i / 8] & (0x80 >> (i % 8)))
 		{
-			d += (vel[i] - vel[id]) * (W(id, i) * 2.f * rho[i] / rho[id]);
+			if (rho[id] != 0)
+				d += (vel[i] - vel[id]) * (W(id, i) * 2.f * rho[i] / rho[id]);
+			else
+				__debugbreak();
 		}
 	}
 	d *= 0.5f;
@@ -239,7 +246,7 @@ void getNearst() //fill adiazentz matrix
 			d = (pos[i] - pos[j]);
 			if (d.sq() < r*r)
 			{
-				map[w * i + j / 8] |= 0x01 << (j % 8);
+				map[w * i + j / 8] |= 0x80 >> (j % 8);
 			}
 		}
 }
@@ -250,17 +257,17 @@ void calculatehalf()
 		velN[i] = vel[i] + deltaVel(i) * dt * 0.5f;
 		if (!(velN[i] == velN[i]))
 		{
-			int m = MessageBox(NULL, (LPCSTR)"Mist", (LPCSTR)"ERROR", MB_ICONWARNING);
+			__debugbreak();
 		}
 		rhoN[i] = rho[i] + deltaRho(i) * dt * 0.5f;
 		if (!(rhoN[i] == rhoN[i]))
 		{
-			int m = MessageBox(NULL, (LPCSTR)"Mist", (LPCSTR)"ERROR", MB_ICONWARNING);
+			__debugbreak();
 		}
 		posN[i] = pos[i] + deltaPos(i) * dt * 0.5f;
 		if (!(posN[i] == posN[i]))
 		{
-			int m = MessageBox(NULL, (LPCSTR)"Mist", (LPCSTR)"ERROR", MB_ICONWARNING);
+			__debugbreak();
 		}
 	}
 }
@@ -273,10 +280,45 @@ void aproximateTimeStep()
 		posN[i] = pos[i] + deltaPos(i) * dt;
 	}
 }
-void renderNewPic()	//flip each bit
+void boundaryCheck()
 {
-	getNearst();
-	
+	for (int i = 0; i < n; ++i)
+	{
+		if (pos[i].x < 0)
+		{
+			pos[i].x = 0.f;
+			vel[i].x = -vel[i].x * bD;
+		}
+		else if (pos[i].x >= res[0] - 1)
+		{
+			pos[i].x = res[0] - 1;
+			vel[i].x = -vel[i].x * bD;
+		}
+		if (pos[i].y >= res[1] - 1)
+		{
+			pos[i].y = res[1] - 1;
+			vel[i].y = -vel[i].y * bD;
+		}
+		else if (pos[i].y < 0)
+		{
+			pos[i].y = 0;
+			vel[i].y = -vel[i].y * bD;
+		}
+	}
+}
+void renderNewPic(HWND hWnd)	//flip each bit
+{
+	getNearst();/*
+	const int w = n / 8 + 1;
+	std::stringstream ss;
+	for (int i = 0; i < n; ++i)
+	{
+		for (int j = 0; j < n; ++j)
+			ss << ((map[w * i + j / 8] & 0x80 >> (j % 8)) ? 1 : 0) << " ";
+		ss << std::endl;
+	}
+	int i = MessageBox(hWnd, ss.str().c_str(), "Map", MB_YESNO);*/
+
 	calculatehalf();
 	std::swap(vel, velN);
 	std::swap(rho, rhoN);
@@ -286,6 +328,8 @@ void renderNewPic()	//flip each bit
 	std::swap(vel, velN);
 	std::swap(pos, posN);
 	std::swap(rho, rhoN);
+
+	boundaryCheck();
 
 	memset(pic, 0, bytePerLine * res[1] * sizeof(BYTE));
 	for (int i = 0; i < n; ++i)
@@ -349,11 +393,16 @@ LRESULT CALLBACK WindProcedure(HWND hWnd, UINT Msg,
 			DeleteDC(MemDCExercising);
 			DeleteObject(bmpExercising);
 			EndPaint(hWnd, &Ps); 
+			drawing = false;
 		}
 		break;
 	case WM_TIMER: {
-		renderNewPic();
-		InvalidateRgn(hWnd, NULL, FALSE);
+		if (!drawing)
+		{
+			drawing = true;
+			renderNewPic(hWnd);
+			InvalidateRgn(hWnd, NULL, FALSE);
+		}
 	}
 	default:
 		return DefWindowProc(hWnd, Msg, wParam, lParam);
