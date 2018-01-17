@@ -6,6 +6,7 @@
 #include <memory>
 #include <windows.h>
 #include <WinUser.h>
+#include <math.h>
 
 struct float2 {
 	void operator+=(const float2& add)
@@ -17,6 +18,10 @@ struct float2 {
 	{
 		this->x -= add.x;
 		this->y -= add.y;
+	}
+	void operator*= (const float& vec)
+	{
+		*this = *this * vec;
 	}
 	float2 operator*(const float& f)
 	{
@@ -30,9 +35,19 @@ struct float2 {
 	{
 		return {this->x + add.x, this->y + add.y};
 	}
+	float operator*(const float2& vec)
+	{
+		return this->x * vec.x + this->y * vec.y;
+	}
 	bool operator<(const float& num)
 	{
 		return (this->sq()) < num;
+	}
+	bool operator== (const float2& vec)
+	{
+		if (vec.x == this->x && vec.y == this->y)
+			return true;
+		return false;
 	}
 	float sq()
 	{
@@ -46,27 +61,38 @@ HINSTANCE hInst;
 LRESULT CALLBACK WindProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 const int res[] = { 100, 50 };
 const float a = res[0] * res[1];
-#define n 2 //amount of Particle
+#define n 6 //amount of Particle
 const float p = 0.3f; //how mch room is filled with fluid
 const float visc = 0.8f;	//visosity		//F=-visc*dv.x/d(p1, p2).x
 const float g = 0.9f;		//gravity
-const float r = 1;// std::sqrt(p * a / (float)n);		//particle radius
+const float r = 3;// std::sqrt(p * a / (float)n);		//particle radius
 const int frameTimeMs = 20;
 const float dt = 0.02f;		//time between animation steps
+const float roh0 = 1.f;
 BYTE *pic;
 size_t bytePerLine;
 float2 pos[n];
 float2 posN[n];
 float2 vel[n];
 float2 velN[n];
+float2 dVel[n];
+float  rho[n];
+float  rhoN[n];
+byte   map[(n/8 + 1) * (n/8 + 1)]; //bit map for neighbor
 INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	LPSTR lpCmdLine, int nCmdShow)
 {
 	for (int i = 0; i < n; ++i)
 	{
-		pos[i] = {(float)(i % res[0])*40, float(i / res[0])};
-		vel[i] = {i==0? 5.f: -1.f, 0.f};
+		pos[i] = {(float)(i % 2)*10 + 10, (float) i / 2 * 5};
+		rho[i] = 1.f;
 	}
+	vel[0] = {0.f, 0.f};
+	vel[1] = { -2.f ,0.f };
+	vel[2] = { 5.f, 0.f };
+	vel[3] = { -2.f, 0.f };
+	vel[4] = { 3.f, 0.f };
+	vel[5] = { -4.f, 0.f};
 	WNDCLASSEX  WndCls;
 	static char szAppName[] = "BitmapIntro";
 	MSG         Msg;
@@ -112,58 +138,155 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 	return static_cast<int>(Msg.wParam);
 }
-
-void checkBound(int id)
+float deltaRho(int id)
 {
-	if (posN[id].x < 0)
-	{
-		posN[id].x = 0;
-		velN[id].x = 0.f;
-	}
-	if (posN[id].x >= res[0])
-	{
-		posN[id].x = res[0] - 1;
-		velN[id].x = 0.f;
-	}
-	if (posN[id].y < 0)
-	{
-		posN[id].y = 0;
-		velN[id].y = 0.f;
-	}
-	if (posN[id].y >= res[1])
-	{
-		posN[id].y = res[1] - 1;
-		velN[id].y = 0.f;
-	}
+	if(vel[id].x != 0 && vel[id].y != 0)
+		return -rho[id] * (dVel[id].x / vel[id].x + dVel[id].y / vel[id].y);
+	//if(dVel[id].x != 0 || dVel[id].y != 0)
+	//	int m = MessageBox(NULL, (LPCSTR)"Mist", (LPCSTR)"ERROR", MB_ICONWARNING);
+	return 0.f;
 }
-void physik(int id)
+float getVisc(int id1, int id2)
 {
-	float2 force = { 0.f, 0.f };
-	force.y = 0.9f;
-	float absF;
+	float2 dVel = vel[id1] - vel[id2];
+	float2 dPos = pos[id1] - pos[id2];
+	if (dVel.x * dPos.x < 0 && dVel.y * dPos.y < 0)
+	{
+		return dVel * dPos / (dPos * dPos);
+	}
+	return 0.f;
+}
+float W(int id1, int id2)
+{
+	float2 d = pos[id1] - pos[id2];
+	float p = d.sq() / (r * r);
+	if (p < 0.5)
+	{
+		return 40 / (7 * 3.14f) * (6 * p*p*p - 6 * p*p + 1);
+	}
+	else if (p < 1.f)
+	{
+		p = 1.f - p;
+		return 40 / (7 * 3.14f) * 2 * p*p*p;
+	}
+	else
+		return 0.f;
+}
+float deltaW(int id1, int id2)
+{
+	float2 d = pos[id1] - pos[id2];
+	float p = d.sq() / (r * r);
+	if (p < 0.5)
+	{
+		return 240.f / (7.f * 3.14f) * (3 * p*p - 2 * p);
+	}
+	else if (p < 1.f)
+	{
+		p = 1.f - p;
+		return -240.f / (7.f* 3.14f) * p*p;
+	}
+	else
+		return 0.f;
+}
+const float c = 250.f;
+float cacPresRho(int id)
+{
+	float r = c*c * (rho[id] - roh0);
+	if (rho[id] / roh0 < 0.9f)
+		return 0.f;
+	else return r;
+}
+float2 deltaVel(int id)
+{
+	const int w = n / 8 + 1; //map width
+	dVel[id] = { 0.f, 0.f};
+	float pr = cacPresRho(id);
 	for (int i = 0; i < n; ++i)
 	{
-		if (i == id) continue;
-		float2 d;
-		d = pos[id] - pos[i];
-		if (std::abs(d.x) < 5 && d.sq() > 0)//in radius
+		if (map[id * w + i / 8] & (0x01 << (i % 8)))
 		{
-			if (d.x > 0)
-				force.x = -100 + (d.x*d.x);
-			else
-				force.x = 100 - (d.x * d.x);
+			if(vel[i].x != 0)
+				dVel[id].x = rho[id] * (pr + cacPresRho(i) + getVisc(id, i)) * deltaW(id, i) / vel[i].x;
+			if(vel[i].y != 0)
+				dVel[id].y = rho[id] * (pr + cacPresRho(i) + getVisc(id, i)) * deltaW(id, i) / vel[i].y;
 		}
 	}
-	velN[id] = vel[id] + force * dt;
-	posN[id] = pos[id] + vel[id] * dt;
-	checkBound(id);
+	return dVel[id];
+}
+float2 deltaPos(int id)
+{
+	const int w = n / 8 + 1;
+	float2 d = { 0.f, 0.f };
+	for (int i = 0; i < n; ++i)
+	{
+		if (map[id * w + i / 8] & (0x01 << (i % 8)))
+		{
+			d += (vel[i] - vel[id]) * (W(id, i) * 2.f * rho[i] / rho[id]);
+		}
+	}
+	d *= 0.5f;
+	return d + vel[id];
+}
+void getNearst() //fill adiazentz matrix
+{
+	const int w = n / 8 + 1;
+	memset(map, 0, w * w);
+	float2 d;
+	for(int i = 0; i < n; ++i)
+		for (int j = 0; j < n; ++j)
+		{
+			if (i == j) continue;
+			d = (pos[i] - pos[j]);
+			if (d.sq() < r*r)
+			{
+				map[w * i + j / 8] |= 0x01 << (j % 8);
+			}
+		}
+}
+void calculatehalf()
+{
+	for (int i = 0; i < n; ++i)
+	{
+		velN[i] = vel[i] + deltaVel(i) * dt * 0.5f;
+		if (!(velN[i] == velN[i]))
+		{
+			int m = MessageBox(NULL, (LPCSTR)"Mist", (LPCSTR)"ERROR", MB_ICONWARNING);
+		}
+		rhoN[i] = rho[i] + deltaRho(i) * dt * 0.5f;
+		if (!(rhoN[i] == rhoN[i]))
+		{
+			int m = MessageBox(NULL, (LPCSTR)"Mist", (LPCSTR)"ERROR", MB_ICONWARNING);
+		}
+		posN[i] = pos[i] + deltaPos(i) * dt * 0.5f;
+		if (!(posN[i] == posN[i]))
+		{
+			int m = MessageBox(NULL, (LPCSTR)"Mist", (LPCSTR)"ERROR", MB_ICONWARNING);
+		}
+	}
+}
+void aproximateTimeStep()
+{
+	for (int i = 0; i < n; ++i)
+	{
+		velN[i] = vel[i] + deltaVel(i) * dt;
+		rhoN[i] = rho[i] + deltaRho(i) * dt;
+		posN[i] = pos[i] + deltaPos(i) * dt;
+	}
 }
 void renderNewPic()	//flip each bit
 {
-	for(int i = 0; i < n; ++i)
-		physik(i);
+	getNearst();
+	
+	calculatehalf();
+	std::swap(vel, velN);
+	std::swap(rho, rhoN);
+	std::swap(pos, posN);
+
+	aproximateTimeStep();
 	std::swap(vel, velN);
 	std::swap(pos, posN);
+	std::swap(rho, rhoN);
+
 	memset(pic, 0, bytePerLine * res[1] * sizeof(BYTE));
 	for (int i = 0; i < n; ++i)
 	{
