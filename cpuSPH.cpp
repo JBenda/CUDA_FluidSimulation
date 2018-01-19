@@ -64,33 +64,33 @@ HINSTANCE hInst;
 LRESULT CALLBACK WindProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 const int res[] = { 100, 50 };
 const float a = res[0] * res[1];
-#define n 100//amount of Particle
+#define n 10//amount of Particle
 const float p = 0.3f; //how mch room is filled with fluid
 const float visc = 0.8f;	//visosity		//F=-visc*dv.x/d(p1, p2).x
 const float g = 0.9f;		//gravity
-const float r = 3;// std::sqrt(p * a / (float)n);		//particle radius
-const int frameTimeMs = 20;
-const float dt = 0.02f;		//time between animation steps
-const float roh0 = 1.f;
-const float c = 250.f;
-const float bD = 0.f;	//dämpfungsfactor für colliion mit der wand
+const float r = 1;// std::sqrt(p * a / (float)n);		//particle radius
+const float h = 2 * r;
+const float min = h / 5.f;
+const int frameTimeMs = 1;
+const float dt = 0.001f;		//time between animation steps
+const float d = 0.1f; //federkonstante
+
 BYTE *pic;
 size_t bytePerLine;
 float2 pos[n];
+float2 posP[n];
 float2 posN[n];
 float2 vel[n];
+float2 velP[n];
 float2 velN[n];
 float2 dVel[n];
-float  rho[n];
-float  rhoN[n];
 byte   map[(n/8 + 1) * n]; //bit map for neighbor
 INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	LPSTR lpCmdLine, int nCmdShow)
 {
 	for (int i = 0; i < n; ++i)
 	{
-		pos[i] = {(float)(i * 2 / res[1]), (float)(i % (res[1] / 2) * 2 + 2)};
-		rho[i] = 1.f;
+		pos[i] = {(float)((i / res[1]) * 2), float((i % (res[1] / 2)) * 2)};
 		vel[i] = { 0.f, 0.f };
 	}
 	WNDCLASSEX  WndCls;
@@ -138,196 +138,187 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 	return static_cast<int>(Msg.wParam);
 }
-float deltaRho(int id)
-{
-	if(vel[id].x != 0 && vel[id].y != 0)
-		return -rho[id] * (dVel[id].x / vel[id].x + dVel[id].y / vel[id].y);
-	//if(dVel[id].x != 0 || dVel[id].y != 0)
-	//	int m = MessageBox(NULL, (LPCSTR)"Mist", (LPCSTR)"ERROR", MB_ICONWARNING);
-	return 0.f;
-}
-float getVisc(int id1, int id2)
-{
-	float2 dVel = vel[id1] - vel[id2];
-	float2 dPos = pos[id1] - pos[id2];
-	if (dVel.x * dPos.x < 0 && dVel.y * dPos.y < 0)
-	{
-		float v = dVel * dPos / (dPos * dPos) * r;
-		float rhoQ = (rho[id1] + rho[id2]) * 0.5f;
-		return (-c*v + v*v) / rhoQ;
-	}
-	return 0.f;
-}
-float W(int id1, int id2)
-{
-	float2 d = pos[id1] - pos[id2];
-	float p = d.sq() / (r * r);
-	if (p < 0.5)
-	{
-		return 40 / (7 * 3.14f) * (6 * p*p*p - 6 * p*p + 1);
-	}
-	else if (p < 1.f)
-	{
-		p = 1.f - p;
-		return 40 / (7 * 3.14f) * 2 * p*p*p;
-	}
-	else
-		return 0.f;
-}
-float deltaW(int id1, int id2)
-{
-	float2 d = pos[id1] - pos[id2];
-	float p = d.sq() / (r * r);
-	if (p < 0.5)
-	{
-		return 240.f / (7.f * 3.14f) * (3 * p*p - 2 * p);
-	}
-	else if (p < 1.f)
-	{
-		p = 1.f - p;
-		return -240.f / (7.f* 3.14f) * p*p;
-	}
-	else
-		return 0.f;
-}
-float cacPresRho(int id)
-{
-	float r = - c*c * (rho[id] - roh0);
-	if (rho[id] / roh0 < 0.9f)
-		return 0.f;
-	else return r;
-}
-float2 deltaVel(int id)
-{
-	const int w = n / 8 + 1; //map width
-	dVel[id] = { 0.f, 0.f};
-	float pr = cacPresRho(id);
-	float rhoSq = rho[id] * rho[id];
 
-	dVel[id].y = g;
-	bool xBlocked = false;
-	bool yBlocked = false;
-	for (int i = 0; i < n; ++i)
-	{
-		if (map[id * w + i / 8] & (0x80 >> (i % 8)))
-		{
-				dVel[id].x += roh0 * (pr + cacPresRho(i) + getVisc(id, i)) * deltaW(id, i);
-				dVel[id].y += roh0 * (pr + cacPresRho(i) + getVisc(id, i)) * deltaW(id, i);
-		}
-	}
-	return dVel[id];
-}
-float2 deltaPos(int id)
-{
-	const int w = n / 8 + 1;
-	float2 d = { 0.f, 0.f };
-	for (int i = 0; i < n; ++i)
-	{
-		if (map[id * w + i / 8] & (0x80 >> (i % 8)))
-		{
-			if (rho[id] != 0)
-				d += (vel[i] - vel[id]) * (W(id, i) * 2.f * rho[i] / rho[id]);
-			else
-				__debugbreak();
-		}
-	}
-	d *= 0.5f;
-	return d + vel[id];
-}
 void getNearst() //fill adiazentz matrix
 {
 	const int w = n / 8 + 1;
-	memset(map, 0, w * w);
+	memset(map, 0, w * n);
 	float2 d;
 	for(int i = 0; i < n; ++i)
 		for (int j = 0; j < n; ++j)
 		{
 			if (i == j) continue;
 			d = (pos[i] - pos[j]);
-			if (d.sq() < r*r)
+			if (d.sq() < h*h)
 			{
 				map[w * i + j / 8] |= 0x80 >> (j % 8);
 			}
 		}
 }
+float distance(int id, int g) //distance between point[id] and g, point[g] e g && vel[g] || g
+{
+	return 1.f;
+}
+float W(float p) //p = d^2 / h^2
+{
+	if (p < 1.f)
+	{
+		return 0.2f * (6.f * p*p - 3 * p+ 1);
+	}
+	else 0.f;
+}
+float2 deltaVel(int id, float2 *pos, float2 *vel)
+{
+	const int w = n / 8 + 1;
+	dVel[id] = { 0.f, g };
+	float absDx;
+	float2 dx;
+	float2 vq;
+	for (int i = 0; i < n; ++i)
+	{
+		if (!(pos[i] == pos[i]))
+		{
+			__debugbreak();
+			continue;
+		}
+		if (!(pos[id] == pos[id]))
+		{
+			if (!(pos[id].x == pos[id].x))
+				__debugbreak();
+			else if (!(pos[id].y == pos[id].y))
+				__debugbreak();
+			else
+				__debugbreak();
+			continue;
+		}
+		dx = pos[i] - pos[id];
+		bool colision = false;
+		if (isnan(dx.y) || isnan(dx.x))
+			__debugbreak();
+		if (map[id * w + i / 8] & 0x80 >> (i % 8))
+		{
+			
+			absDx = std::abs(std::sqrt(dx.sq()));
+			if (isnan(absDx))
+				__debugbreak();
+			if (absDx < min)
+			{
+				vel[i] = { 0.f, 0.f };
+				vel[id] = { 0.f, 0.f };
+				if (absDx == 0)
+					__debugbreak();
+				dx *= (min / absDx);
+				absDx = std::sqrt(dx.sq());
+				if(isnan(absDx))
+					__debugbreak();
+				if (absDx < 0)
+					__debugbreak();
+				pos[i] += (dx * 0.5f);
+				pos[id] -= (dx * 0.5f);
+				colision = true;
+				dVel[id] = { 0.f, 0.f };
+			}
+			else if(!colision)
+				dVel[id] += (dx - (dx * (h / absDx))) * d;	//bounce
+			//dVel[id] += vel[i] * (visc / distance(id, i))
+		}
+	}
+	if (!(dVel[id] == dVel[id]))
+		__debugbreak();
+	return dVel[id];
+}
+float2 deltaPos(int id, float2 *pos, float2 *vel)
+{
+	const int w = n / 8 + 1;
+	float2 dx = { 0.f, 0.f};
+	for (int i = 0; i < n; ++i)
+	{
+		if (map[id * w + i / 8] & 0x80 >> (1 % 8))
+		{
+			dx += (vel[i] - vel[id])*W((pos[i] - pos[id]).sq() / (h*h));
+		}
+	}
+	dx *= 0.5f;
+	dx += vel[id];
+	if (!(dx == dx))
+		__debugbreak();
+	return dx;
+}
 void calculatehalf()
 {
 	for (int i = 0; i < n; ++i)
 	{
-		velN[i] = vel[i] + deltaVel(i) * dt * 0.5f;
-		if (!(velN[i] == velN[i]))
-		{
+		velP[i] = vel[i] + deltaVel(i, pos, vel) * (dt * 0.5f);
+		if (!(velP == velP))
 			__debugbreak();
-		}
-		rhoN[i] = rho[i] + deltaRho(i) * dt * 0.5f;
-		if (!(rhoN[i] == rhoN[i]))
-		{
+		posP[i] = pos[i] + deltaPos(i, pos, vel) * dt * 0.5f;
+		if (!(posP == posP))
 			__debugbreak();
-		}
-		posN[i] = pos[i] + deltaPos(i) * dt * 0.5f;
-		if (!(posN[i] == posN[i]))
-		{
-			__debugbreak();
-		}
 	}
 }
 void aproximateTimeStep()
 {
 	for (int i = 0; i < n; ++i)
 	{
-		velN[i] = vel[i] + deltaVel(i) * dt;
-		rhoN[i] = rho[i] + deltaRho(i) * dt;
-		posN[i] = pos[i] + deltaPos(i) * dt;
+		velN[i] = vel[i] + deltaVel(i, posP, velP) * dt;
+		if (!(velN == velN))
+			__debugbreak();
+		posN[i] = pos[i] + deltaPos(i, posP, velP) * dt;
+		if (!(posN == posN))
+			__debugbreak();
 	}
+	std::swap(posN, pos);
+	std::swap(velN, vel);
 }
 void boundaryCheck()
 {
+	const float bD = 0.f;
+	const int w = n / 8 + 1;
 	for (int i = 0; i < n; ++i)
 	{
 		if (pos[i].x < 0)
 		{
 			pos[i].x = 0.f;
 			vel[i].x = -vel[i].x * bD;
+			for (int j = 0; j < n; ++j)
+				if (map[w*j + j / 8] & 0x80 >> (j % 8))
+					vel[j].x = vel[i].x;
 		}
 		else if (pos[i].x >= res[0] - 1)
 		{
 			pos[i].x = res[0] - 1;
 			vel[i].x = -vel[i].x * bD;
+			for (int j = 0; j < n; ++j)
+				if (map[w*j + j / 8] & 0x80 >> (j % 8))
+					vel[j].x = vel[i].x;
 		}
 		if (pos[i].y >= res[1] - 1)
 		{
 			pos[i].y = res[1] - 1;
 			vel[i].y = -vel[i].y * bD;
+			for (int j = 0; j < n; ++j)
+				if (map[w*j + j / 8] & 0x80 >> (j % 8))
+					vel[j].y = vel[i].y;
 		}
 		else if (pos[i].y < 0)
 		{
 			pos[i].y = 0;
 			vel[i].y = -vel[i].y * bD;
+			for (int j = 0; j < n; ++j)
+				if (map[w*j + j / 8] & 0x80 >> (j % 8))
+					vel[j].y = vel[i].y;
 		}
+		if (!(pos[i] == pos[i]))
+			__debugbreak();
 	}
 }
 void renderNewPic(HWND hWnd)	//flip each bit
 {
-	getNearst();/*
-	const int w = n / 8 + 1;
-	std::stringstream ss;
-	for (int i = 0; i < n; ++i)
-	{
-		for (int j = 0; j < n; ++j)
-			ss << ((map[w * i + j / 8] & 0x80 >> (j % 8)) ? 1 : 0) << " ";
-		ss << std::endl;
-	}
-	int i = MessageBox(hWnd, ss.str().c_str(), "Map", MB_YESNO);*/
+	getNearst();
 
 	calculatehalf();
-	std::swap(vel, velN);
-	std::swap(rho, rhoN);
-	std::swap(pos, posN);
 
 	aproximateTimeStep();
-	std::swap(vel, velN);
-	std::swap(pos, posN);
-	std::swap(rho, rhoN);
 
 	boundaryCheck();
 
