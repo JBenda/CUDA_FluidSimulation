@@ -1,0 +1,19 @@
+E = SUM(m/2 * v^2) + SUM(u)+ U
+U = E_i + E_o
+k = 0.2
+m1 = m2 = 1
+-> dE = 0.5 * (v1 - v2)^2*(1-k^2) Energie verlust
+->v1'  = (v1 + v2 - (v1 - v2)*k) * 0.5
+->v2'  = (v1 + v2 - (v2 - v1)*k) * 0.5
+
+dv1 = v1' - v1;
+dv1*m = F(t)*dt
+
+dv1 = a(t)*dt
+
+
+if(norm - r1 - r2 < step * |dv * dx| / norm)
+collision
+norm = sum(i=0, i=dim(x), dx[i]^2) ^0.5;
+
+a = - 1/2* dv*dx/norm^2*dx
