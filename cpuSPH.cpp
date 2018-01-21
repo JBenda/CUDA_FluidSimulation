@@ -64,19 +64,6 @@ HINSTANCE hInst;
 LRESULT CALLBACK WindProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 const int res[] = { 500, 250 };
 const float a = res[0] * res[1];
-<<<<<<< HEAD
-#define n 100//amount of Particle
-const float p = 0.3f; //how much room is filled with fluid
-const float visc = 0.8f;	//visosity		//F=-visc*dv.x/d(p1, p2).x
-const float g = 0.9f;		//gravity
-const float r = 3;// std::sqrt(p * a / (float)n);		//particle radius
-const int frameTimeMs = 20;
-const float dt = 0.02f;		//time between animation steps
-BYTE *pic;
-size_t bytePerLine;
-float2 pos[n];
-float2 vel[n];
-=======
 #define n 1000//amount of Particle
 const float p = 0.3f; //how mch room is filled with fluid
 const float visc = 0.8f;	//visosity		//F=-visc*dv.x/d(p1, p2).x
@@ -100,7 +87,6 @@ float2 velN[n];
 float2 dVel[n];
 float2 pres[n];
 byte   map[(n/8 + 1) * n]; //bit map for neighbor
->>>>>>> b67cda9cc322cb7634b9ddee8863ca8301d7bf60
 INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	LPSTR lpCmdLine, int nCmdShow)
 {
@@ -108,9 +94,6 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	float y = 0.f;
 	for (int i = 0; i < n; ++i)
 	{
-<<<<<<< HEAD
-		pos[i] = { (float)(i * 6 / res[1]), (float)(i % (res[1] / 6) * 6) };
-=======
 		y += 3.f;
 		if (y >= res[1] - 1)
 		{
@@ -118,7 +101,6 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			x += 3.f;
 		}
 		pos[i] = { x, y };
->>>>>>> b67cda9cc322cb7634b9ddee8863ca8301d7bf60
 		vel[i] = { 0.f, 0.f };
 	}
 	WNDCLASSEX  WndCls;
@@ -166,36 +148,6 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 	return static_cast<int>(Msg.wParam);
 }
-<<<<<<< HEAD
-void ballCollision(int b1, int b2)
-{
-	float2 dv = vel[b1] - vel[b2];
-	float2 dx = pos[b1] - pos[b2];
-	float normSq = dx.sq();
-	float norm = std::sqrt(normSq);
-	if (norm - 2.f * r< dt * std::abs(dv*dx) / norm)
-	{
-		float2 a = dx * ((dv*dx) / normSq) + float2({0.f, g});
-		vel[b1] = vel[b1] - a * dt;
-		vel[b2] = vel[b2] + a * dt;
-	}
-}
-void wallCollision(int id)
-{
-	if (pos[id].x - r < 0 || pos[id].x + r > res[0])
-		vel[id].x = vel[id].x * (-1.f);
-	if (pos[id].y - r < 0 || pos[id].x + r > res[1])
-		vel[id].y = vel[id].y * (-1.f);
-}
-void calculateCollision()
-{
-	for (int i = 0; i < n; ++i)
-	{
-		for (int j = i + 1; j < n; ++j)
-		{
-			ballCollision(i, j);
-=======
-
 void getNearst() //fill adiazentz matrix
 {
 	const int w = n / 8 + 1;
@@ -294,24 +246,9 @@ float2 deltaVel(int id, float2 *pos, float2 *vel)
 					dVel[id] -= dx * (dx * pres[i] / (absP * absDx) / absDx) * 0.9f;
 			}
 			//dVel[id] += vel[i] * (visc / distance(id, i))
->>>>>>> b67cda9cc322cb7634b9ddee8863ca8301d7bf60
 		}
 		wallCollision(i);
 	}
-<<<<<<< HEAD
-}
-void moveStep()
-{
-	for (int i = 0; i < n; ++i)
-	{
-		pos[i] += vel[i] * dt;
-	}
-}
-void renderNewPic(HWND hWnd)
-{
-	calculateCollision();
-	moveStep();
-=======
 	if (!(dVel[id] == dVel[id]))
 		__debugbreak();
 	return dVel[id];
@@ -446,7 +383,6 @@ void renderNewPic(HWND hWnd)	//flip each bit
 
 	boundaryCheck();
 
->>>>>>> b67cda9cc322cb7634b9ddee8863ca8301d7bf60
 	memset(pic, 0, bytePerLine * res[1] * sizeof(BYTE));
 	for (int i = 0; i < n; ++i)
 	{
