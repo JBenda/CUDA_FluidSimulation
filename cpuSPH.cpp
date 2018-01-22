@@ -56,6 +56,10 @@ struct float2 {
 	{
 		return this->x * this->x + this->y * this->y;
 	}
+	float2 abs()
+	{
+		return { std::abs(this->x), std::abs(this->y) };
+	}
 	float x;
 	float y;
 };
@@ -163,7 +167,7 @@ void getNearst() //fill adiazentz matrix
 			if (d.sq() < h*h)
 			{
 				if (d.sq() == 0)
-					__debugbreak();
+					continue;
 				map[w * i + j / 8] |= 0x80 >> (j % 8);
 				float c = std::sqrt(d.sq());
 				c *= 0.5f;
@@ -184,10 +188,6 @@ void getNearst() //fill adiazentz matrix
 		if (pres[i].x > 2.f*h || pres[i].y > 2.f*h)
 			__debugbreak();
 	}
-}
-float distance(int id, int g) //distance between point[id] and g, point[g] e g && vel[g] || g
-{
-	return 1.f;
 }
 float W(float p) //p = d^2 / h^2
 {
@@ -229,25 +229,42 @@ float2 deltaVel(int id, float2 *pos, float2 *vel)
 			__debugbreak();
 		if (map[id * w + i / 8] & 0x80 >> (i % 8))
 		{
+
+			if (dx.sq() == 0)
+				__debugbreak();
 			if (id == i)
 				__debugbreak();
 			absDx = std::abs(std::sqrt(dx.sq()));
 			if (isnan(absDx))
 				__debugbreak();
-			if (absDx < min * 0.5f)
+			if (absDx < min)
 			{
-				__debugbreak();
+				dx *= (min / absDx);
+				absDx = min;
 			}
-			else
 			{
 				dVel[id] += (dx - (dx * (h / absDx))) * 0.01f;	//bounce
 				float absP = std::sqrt(pres[i].sq());
 				if(absP > 0)
 					dVel[id] -= dx * (dx * pres[i] / (absP * absDx) / absDx) * 0.9f;
 			}
-			//dVel[id] += vel[i] * (visc / distance(id, i))
+			float2 dv = vel[i] - vel[id];
+			if (dv.sq() != 0 && false)
+			{
+				const float visc = 0.00001f;
+				dx = dx.abs();
+				if (dx.x > 0 || dx.y > 0)
+					__debugbreak();
+				float f = (visc / dx.x);
+				if (f > 1.f)
+					__debugbreak;
+				if (dx.x < min)
+					dVel[id].x += dv.x * (visc / dx.x);
+				if (dx.y < min)
+					dVel[id].y += dv.y * (visc / dx.y);
+			}
+				
 		}
-		wallCollision(i);
 	}
 	if (!(dVel[id] == dVel[id]))
 		__debugbreak();
@@ -289,7 +306,8 @@ void ceckPos(float2 *pos)
 				dvel[0] = (dvel[1] + dvel[0]) * 0.5f;
 				vel[id] += dvel[0];
 				vel[i] += dvel[0];
-				dx *= (min / absDx);
+				//no position correction
+				/*dx *= (min / absDx);
 				absDx = std::sqrt(dx.sq());
 				if (isnan(absDx))
 					__debugbreak();
@@ -297,7 +315,7 @@ void ceckPos(float2 *pos)
 					__debugbreak();
 				pos[i] += (dx * 0.5f);
 				pos[id] -= (dx * 0.5f);
-				id = 0;
+				id = 0;*/
 			}
 			if (isnan(pos[i].x) || isnan(pos[i].y) || isnan(pos[id].x) || isnan(pos[id].y))
 				__debugbreak();
@@ -333,13 +351,13 @@ void aproximateTimeStep()
 }
 void boundaryCheck()
 {
-	const float bD = 0.f;
+	const float bD = 0.1f;
 	const int w = n / 8 + 1;
 	for (int i = 0; i < n; ++i)
 	{
 		if (pos[i].x < 0)
 		{
-			//pos[i].x = 0.f;
+			pos[i].x = 0.f;
 			vel[i].x = -vel[i].x * bD;
 			for (int j = 0; j < n; ++j)
 				if (map[w*j + j / 8] & 0x80 >> (j % 8))
@@ -347,7 +365,7 @@ void boundaryCheck()
 		}
 		else if (pos[i].x >= res[0] - 1)
 		{
-			//pos[i].x = res[0] - 1;
+			pos[i].x = res[0] - 1;
 			vel[i].x = -vel[i].x * bD;
 			for (int j = 0; j < n; ++j)
 				if (map[w*j + j / 8] & 0x80 >> (j % 8))
@@ -355,7 +373,7 @@ void boundaryCheck()
 		}
 		if (pos[i].y >= res[1] - 1)
 		{
-			//pos[i].y = res[1] - 1;
+			pos[i].y = res[1] - 1;
 			vel[i].y = -vel[i].y * bD;
 			for (int j = 0; j < n; ++j)
 				if (map[w*j + j / 8] & 0x80 >> (j % 8))
@@ -363,7 +381,7 @@ void boundaryCheck()
 		}
 		else if (pos[i].y < 0)
 		{
-			//pos[i].y = 0;
+			pos[i].y = 0;
 			vel[i].y = -vel[i].y * bD;
 			for (int j = 0; j < n; ++j)
 				if (map[w*j + j / 8] & 0x80 >> (j % 8))
@@ -378,6 +396,8 @@ void renderNewPic(HWND hWnd)	//flip each bit
 	getNearst();
 
 	calculatehalf();
+
+	boundaryCheck();
 
 	aproximateTimeStep();
 
