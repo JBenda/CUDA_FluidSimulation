@@ -72,14 +72,14 @@ const int res[] = { 500, 250 };
 const float a = res[0] * res[1];
 #define n 1000//amount of Particle
 const float p = 0.3f; //how mch room is filled with fluid
-const float visc = 0.0001f;	//visosity		//F=-visc*dv.x/d(p1, p2).x
+const float visc = 0.1f;	//visosity		//F=-visc*dv.x/d(p1, p2).x
 const float g = 0.9f;		//gravity
 const float r = 4.f;// std::sqrt(p * a / (float)n);		//particle radius
 const float h = 2.f * r;
 const float min = h / 5.f;
 const int frameTimeMs = 10;
-const float dt = 0.01f;		//time between animation steps
-const float d = 0.0001f; //federkonstante
+const float dt = 0.005f;		//time between animation steps
+const float d = 0.4f; //federkonstante
 const float pre = 0.4f;
 
 BYTE *pic;
@@ -172,13 +172,43 @@ void getNearst() //fill adiazentz matrix
 					continue;
 				map[w * i + j / 8] |= 0x80 >> (j % 8);
 				if (dx.sq() < min*min)
-					pres[i] += 1 / (min*min);
+					pres[i] += 1.f / (min*min);
 				else
-					pres[i] += 1 / dx.sq();	//equivalent zu normierter vector / länge
+					pres[i] += 1.f / dx.sq();	//equivalent zu normierter vector / länge
 			}
 		}
-		if (pres[i] * d > 100)
-			pres[i] = 100.f;
+		if (pos[i].x < h)
+		{
+			if (pos[i].x < min)
+				pres[i] += 1.f / (min*min);
+			else
+				pres[i] += 1.f / (pos[i].x*pos[i].x);
+		}
+		else if (pos[i].x > res[0] - h - 1)
+		{
+			float absD = std::abs(res[0] - 1.f - pos[i].x);
+			if (absD < min)
+				pres[i] += 1.f / (min*min);
+			else
+				pres[i] += 1.f / (absD*absD);
+		}
+		if (pos[i].y < h)
+		{
+			if (pos[i].y < min)
+				pres[i] += 1.f / (min*min);
+			else
+				pres[i] += 1.f / (pos[i].x*pos[i].x);
+		}
+		else if (pos[i].y > res[1] - h - 1)
+		{
+			float absD = std::abs(res[1] - 1 - pos[i].y);
+			if (absD < min)
+				pres[i] += 1.f / (min*min);
+			else
+				pres[i] += 1.f / (absD*absD);
+		}
+		/*if (pres[i] * d > 100)
+			pres[i] = 100.f;*/
 	}
 }
 float W(float p) //p = d^2 / h^2
@@ -253,33 +283,24 @@ float2 deltaVel(int id, float2 *pos, float2 *vel)
 			dVel[id] += dv * (visc / absDx);
 		}
 	}
+	if (pos[id].x < h)
+		dVel[id] += float2({1.f, 0.f}) * pres[id] * d;
+	else if (pos[id].x > res[0] - 1 - h)
+		dVel[id] += float2({ -1.f, 0.f }) * pres[id] * d;
+	if(pos[id].y < h)
+		dVel[id] += float2({ 0.f, 1.f }) * pres[id] * d;
+	else if (pos[id].y > res[1] - 1 - h)
+		dVel[id] += float2({ 0.f, -1.f }) * pres[id] * d;
 	if (!(dVel[id] == dVel[id]))
 		__debugbreak();
-	if (dVel[id].sq() > 10000)
+	if (dVel[id].sq() > 1000)
 	{
-		__debugbreak();
-		float c = 10000 / dVel[id].sq();
+		//__debugbreak();
+		float c = 1000 / dVel[id].sq();
 		c = std::sqrt(c);
 		dVel[id] *= c;
 	}
 	return dVel[id];
-}
-float2 deltaPos(int id, float2 *pos, float2 *vel)
-{
-	const int w = n / 8 + 1;
-	float2 dx = { 0.f, 0.f};
-	for (int i = 0; i < n; ++i)
-	{
-		if (map[id * w + i / 8] & 0x80 >> (1 % 8))
-		{
-			dx += (vel[i] - vel[id])*W((pos[i] - pos[id]).sq() / (h*h));
-		}
-	}
-	dx *= 0.5f;
-	dx += vel[id];
-	if (isnan(dx.x) || isnan(dx.y))
-		__debugbreak();
-	return dx;
 }
 void ceckPos(float2 *pos)
 {
@@ -309,23 +330,13 @@ void ceckPos(float2 *pos)
 					vel[id] = vq;
 					vel[i] = vq;
 				}
-				//no position correction
-				/*dx *= (min / absDx);
-				absDx = std::sqrt(dx.sq());
-				if (isnan(absDx))
-					__debugbreak();
-				if (absDx < 0)
-					__debugbreak();
-				pos[i] += (dx * 0.5f);
-				pos[id] -= (dx * 0.5f);
-				id = 0;*/
 			}
 			if (isnan(pos[i].x) || isnan(pos[i].y) || isnan(pos[id].x) || isnan(pos[id].y))
 				__debugbreak();
 		}
 }
 void calculatehalf()
-{
+{/*
 	for (int i = 0; i < n; ++i)
 	{
 		velP[i] = vel[i] + deltaVel(i, pos, vel) * (dt * 0.5f);
@@ -335,17 +346,23 @@ void calculatehalf()
 		if (!(posP == posP))
 			__debugbreak();
 	}
-	ceckPos(posP);
+	ceckPos(posP);*/
 }
 void aproximateTimeStep()
 {
 	for (int i = 0; i < n; ++i)
 	{
-		velN[i] = vel[i] + deltaVel(i, posP, velP) * dt;
-		if (!(velN == velN))
+		velN[i] = vel[i] + deltaVel(i, pos, vel) * dt;
+		if (!(vel == vel))
 			__debugbreak();
-		posN[i] = pos[i] + deltaPos(i, posP, velP) * dt;
-		if (!(posN == posN))
+		if ((velN[i] - vel[i]).sq() > 1000)
+			__debugbreak();
+		if (vel[i].sq() > 1000)
+			__debugbreak();
+		posN[i] = pos[i] +vel[i] * dt;
+		if (!(pos == pos))
+			__debugbreak();
+		if ((posN[i] - pos[i]).sq() > 1000)
 			__debugbreak();
 	}
 	ceckPos(posN);
@@ -362,33 +379,33 @@ void boundaryCheck()
 		{
 			pos[i].x = 0.f;
 			vel[i].x = -vel[i].x * bD;
-			for (int j = 0; j < n; ++j)
+			/*for (int j = 0; j < n; ++j)
 				if (map[w*j + j / 8] & 0x80 >> (j % 8))
-					vel[j].x = vel[i].x;
+					vel[j].x = vel[i].x;*/
 		}
 		else if (pos[i].x >= res[0] - 1)
 		{
 			pos[i].x = res[0] - 1;
 			vel[i].x = -vel[i].x * bD;
-			for (int j = 0; j < n; ++j)
+			/*for (int j = 0; j < n; ++j)
 				if (map[w*j + j / 8] & 0x80 >> (j % 8))
-					vel[j].x = vel[i].x;
+					vel[j].x = vel[i].x;*/
 		}
 		if (pos[i].y >= res[1] - 1)
 		{
 			pos[i].y = res[1] - 1;
 			vel[i].y = -vel[i].y * bD;
-			for (int j = 0; j < n; ++j)
+			/*for (int j = 0; j < n; ++j)
 				if (map[w*j + j / 8] & 0x80 >> (j % 8))
-					vel[j].y = vel[i].y;
+					vel[j].y = vel[i].y;*/
 		}
 		else if (pos[i].y < 0)
 		{
 			pos[i].y = 0;
 			vel[i].y = -vel[i].y * bD;
-			for (int j = 0; j < n; ++j)
+			/*for (int j = 0; j < n; ++j)
 				if (map[w*j + j / 8] & 0x80 >> (j % 8))
-					vel[j].y = vel[i].y;
+					vel[j].y = vel[i].y;*/
 		}
 		if (!(pos[i] == pos[i]))
 			__debugbreak();
@@ -485,7 +502,7 @@ LRESULT CALLBACK WindProcedure(HWND hWnd, UINT Msg,
 		if (!drawing)
 		{
 			drawing = true;
-			renderNewPic(hWnd, 100);
+			renderNewPic(hWnd, 5);
 			InvalidateRgn(hWnd, NULL, FALSE);
 		}
 	}
