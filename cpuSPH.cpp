@@ -231,7 +231,10 @@ float2 deltaVel(int id, float2 *pos, float2 *vel)
 		{
 
 			if (dx.sq() == 0)
-				__debugbreak();
+			{
+				continue;
+				//__debugbreak();
+			}
 			if (id == i)
 				__debugbreak();
 			absDx = std::abs(std::sqrt(dx.sq()));
@@ -239,6 +242,8 @@ float2 deltaVel(int id, float2 *pos, float2 *vel)
 				__debugbreak();
 			if (absDx < min)
 			{
+				if (absDx == 0)
+					continue;
 				dx *= (min / absDx);
 				absDx = min;
 			}
@@ -248,22 +253,16 @@ float2 deltaVel(int id, float2 *pos, float2 *vel)
 				if(absP > 0)
 					dVel[id] -= dx * (dx * pres[i] / (absP * absDx) / absDx) * 0.9f;
 			}
-			float2 dv = vel[i] - vel[id];
-			if (dv.sq() != 0 && false)
-			{
-				const float visc = 0.00001f;
-				dx = dx.abs();
-				if (dx.x > 0 || dx.y > 0)
-					__debugbreak();
-				float f = (visc / dx.x);
-				if (f > 1.f)
-					__debugbreak;
-				if (dx.x < min)
-					dVel[id].x += dv.x * (visc / dx.x);
-				if (dx.y < min)
-					dVel[id].y += dv.y * (visc / dx.y);
-			}
-				
+			const float visc = 0.00001f;
+			float2 odx = { dx.y, -dx.x };//ortogonal zu dx
+			if (odx.sq() == 0 || absDx == 0)
+				__debugbreak();
+			float2 v1 = odx * (odx*vel[id] / odx.sq());
+			float2 v2 = odx * (odx*vel[i] / odx.sq());
+			float2 dv = v2 - v1;
+			if (!(dv == dv))
+				__debugbreak();
+			dVel[id] += dv * (visc / absDx);
 		}
 	}
 	if (!(dVel[id] == dVel[id]))
@@ -295,17 +294,26 @@ void ceckPos(float2 *pos)
 			if (isnan(pos[i].x) || isnan(pos[i].y))
 				__debugbreak();
 			float2 dx = pos[i] - pos[id];
-			float absDx = std::sqrt(dx.sq());
-			if (absDx < min)
+			if (dx.sq() < min*min)
 			{
-				float2 dvel[2];		//vel welche durch kollision verändert wird
-				dvel[0] = dx * ((dx * vel[id]) / dx.sq());
-				dvel[1] = dx * ((dx * vel[i]) / dx.sq());
-				vel[id] -= dvel[0];
-				vel[i] -= dvel[1];
-				dvel[0] = (dvel[1] + dvel[0]) * 0.5f;
-				vel[id] += dvel[0];
-				vel[i] += dvel[0];
+				if (dx.sq() > 0)
+				{
+					float2 dvel[2];		//vel welche durch kollision verändert wird
+					dvel[0] = dx * ((dx * vel[id]) / dx.sq());
+					dvel[1] = dx * ((dx * vel[i]) / dx.sq());
+					vel[id] -= dvel[0];
+					vel[i] -= dvel[1];
+					dvel[0] = (dvel[1] + dvel[0]) * 0.5f;
+					vel[id] += dvel[0];
+					vel[i] += dvel[0];
+				}
+				else
+				{
+					float2 vq = vel[i] + vel[id];
+					vq *= 0.5f;
+					vel[id] = vq;
+					vel[i] = vq;
+				}
 				//no position correction
 				/*dx *= (min / absDx);
 				absDx = std::sqrt(dx.sq());
@@ -351,7 +359,7 @@ void aproximateTimeStep()
 }
 void boundaryCheck()
 {
-	const float bD = 0.1f;
+	const float bD = 0.0f;
 	const int w = n / 8 + 1;
 	for (int i = 0; i < n; ++i)
 	{
@@ -391,17 +399,20 @@ void boundaryCheck()
 			__debugbreak();
 	}
 }
-void renderNewPic(HWND hWnd)	//flip each bit
+void renderNewPic(HWND hWnd, int loops)	//flip each bit
 {
-	getNearst();
+	for (int i = 0; i < loops; ++i)
+	{
+		getNearst();
 
-	calculatehalf();
+		calculatehalf();
 
-	boundaryCheck();
+		boundaryCheck();
 
-	aproximateTimeStep();
+		aproximateTimeStep();
 
-	boundaryCheck();
+		boundaryCheck();
+	}
 
 	memset(pic, 0, bytePerLine * res[1] * sizeof(BYTE));
 	for (int i = 0; i < n; ++i)
@@ -473,7 +484,7 @@ LRESULT CALLBACK WindProcedure(HWND hWnd, UINT Msg,
 		if (!drawing)
 		{
 			drawing = true;
-			renderNewPic(hWnd);
+			renderNewPic(hWnd, 100);
 			InvalidateRgn(hWnd, NULL, FALSE);
 		}
 	}
