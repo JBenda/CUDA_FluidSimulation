@@ -10,6 +10,8 @@
 #include <math.h>
 #include <intrin.h>
 #include <atomic>
+#include <chrono>
+
 std::atomic_bool drawing = false;
 struct float2 {
 	void operator+=(const float2& add)
@@ -70,14 +72,14 @@ const int res[] = { 500, 250 };
 const float a = res[0] * res[1];
 #define n 1000//amount of Particle
 const float p = 0.3f; //how mch room is filled with fluid
-const float visc = 0.8f;	//visosity		//F=-visc*dv.x/d(p1, p2).x
+const float visc = 0.0001f;	//visosity		//F=-visc*dv.x/d(p1, p2).x
 const float g = 0.9f;		//gravity
-const float r = 1.6f;// std::sqrt(p * a / (float)n);		//particle radius
-const float h = 2 * r;
+const float r = 4.f;// std::sqrt(p * a / (float)n);		//particle radius
+const float h = 2.f * r;
 const float min = h / 5.f;
 const int frameTimeMs = 10;
 const float dt = 0.01f;		//time between animation steps
-const float d = 0.1f; //federkonstante
+const float d = 0.0001f; //federkonstante
 const float pre = 0.4f;
 
 BYTE *pic;
@@ -89,7 +91,7 @@ float2 vel[n];
 float2 velP[n];
 float2 velN[n];
 float2 dVel[n];
-float2 pres[n];
+float pres[n];
 byte   map[(n/8 + 1) * n]; //bit map for neighbor
 INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	LPSTR lpCmdLine, int nCmdShow)
@@ -98,13 +100,13 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	float y = 0.f;
 	for (int i = 0; i < n; ++i)
 	{
-		y += 3.f;
+		y += h;
 		if (y >= res[1] - 1)
 		{
 			y = 0.f;
-			x += 3.f;
+			x += h;
 		}
-		pos[i] = { x, y };
+		pos[i] = { x + (i%2 == 0 ? 0.f : 0.5f), y };
 		vel[i] = { 0.f, 0.f };
 	}
 	WNDCLASSEX  WndCls;
@@ -156,37 +158,27 @@ void getNearst() //fill adiazentz matrix
 {
 	const int w = n / 8 + 1;
 	memset(map, 0, w * n);
-	float2 d;
+	float2 dx;
 	for (int i = 0; i < n; ++i)
 	{
-		pres[i] = {0.f, 0.f};
+		pres[i] = 0.f;
 		for (int j = 0; j < n; ++j)
 		{
 			if (i == j) continue;
-			d = (pos[i] - pos[j]);
-			if (d.sq() < h*h)
+			dx = (pos[i] - pos[j]);
+			if (dx.sq() < h*h)
 			{
-				if (d.sq() == 0)
+				if (dx.sq() == 0)
 					continue;
 				map[w * i + j / 8] |= 0x80 >> (j % 8);
-				float c = std::sqrt(d.sq());
-				c *= 0.5f;
-				float y = std::sqrt(r*r - c*c);
-				y *= 2.f;
-				std::swap(d.x, d.y);
-				d.x = -d.x;
-				d *= 2.f;
-				pres[i] += d;
+				if (dx.sq() < min*min)
+					pres[i] += 1 / (min*min);
+				else
+					pres[i] += 1 / dx.sq();	//equivalent zu normierter vector / länge
 			}
 		}
-		if (pres[i].x > h || pres[i].y > h)
-		{
-			float c = h / (pres[i].x > pres[i].y ? pres[i].x : pres[i].y);
-			pres[i].x *= c;
-			pres[i].y *= c;
-		}
-		if (pres[i].x > 2.f*h || pres[i].y > 2.f*h)
-			__debugbreak();
+		if (pres[i] * d > 100)
+			pres[i] = 100.f;
 	}
 }
 float W(float p) //p = d^2 / h^2
@@ -248,12 +240,8 @@ float2 deltaVel(int id, float2 *pos, float2 *vel)
 				absDx = min;
 			}
 			{
-				dVel[id] += (dx - (dx * (h / absDx))) * 0.01f;	//bounce
-				float absP = std::sqrt(pres[i].sq());
-				if(absP > 0)
-					dVel[id] -= dx * (dx * pres[i] / (absP * absDx) / absDx) * 0.9f;
+				dVel[id] -= dx * ((pres[i] + pres[id]) / absDx) * d;
 			}
-			const float visc = 0.00001f;
 			float2 odx = { dx.y, -dx.x };//ortogonal zu dx
 			if (odx.sq() == 0 || absDx == 0)
 				__debugbreak();
@@ -267,6 +255,13 @@ float2 deltaVel(int id, float2 *pos, float2 *vel)
 	}
 	if (!(dVel[id] == dVel[id]))
 		__debugbreak();
+	if (dVel[id].sq() > 10000)
+	{
+		__debugbreak();
+		float c = 10000 / dVel[id].sq();
+		c = std::sqrt(c);
+		dVel[id] *= c;
+	}
 	return dVel[id];
 }
 float2 deltaPos(int id, float2 *pos, float2 *vel)
@@ -401,6 +396,7 @@ void boundaryCheck()
 }
 void renderNewPic(HWND hWnd, int loops)	//flip each bit
 {
+	std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
 	for (int i = 0; i < loops; ++i)
 	{
 		getNearst();
@@ -413,7 +409,12 @@ void renderNewPic(HWND hWnd, int loops)	//flip each bit
 
 		boundaryCheck();
 	}
+	std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
 
+	std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(end - start);
+	std::stringstream ss;
+	ss << time_span.count() << " seconds";
+	//MessageBox(hWnd, ss.str().c_str(), "Zeit für 100", MB_ICONINFORMATION);
 	memset(pic, 0, bytePerLine * res[1] * sizeof(BYTE));
 	for (int i = 0; i < n; ++i)
 	{
