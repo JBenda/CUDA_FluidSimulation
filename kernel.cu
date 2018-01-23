@@ -14,8 +14,10 @@
 
 #include "d:\Dokumente\OVGU\GPU\cudaSample\solution\src\cuda_util.h"
 std::atomic_bool copyDevDesFin = false;
-#define N 100
+#define N 10000
 #define AMOUNT_SM 20
+
+
 __global__ void calculateMovmentKernel(unsigned int *eInG, uint4* areal, const float H, const float dt, const float visc, const float d, const float g, float *pos_x, float *pos_y, float *vel_x, float *vel_y, float *posN_x, float *posN_y, float *velN_x, float *velN_y);
 __global__ void sumbissionKernel(const int2 res, const int2 fields, uint4 *dev_areal, uint32_t *dev_eInG, const float H, const float dt, const float visc, const float d, const float g, float *pos_x, float *pos_y, float *vel_x, float *vel_y, float *posN_x, float *posN_y, float *velN_x, float *velN_y)
 {
@@ -60,7 +62,6 @@ __global__ void sumbissionKernel(const int2 res, const int2 fields, uint4 *dev_a
 		}
 	}
 	__syncthreads();
-
 	for (int i = 0; i * blockDim.x + threadIdx.x < N; ++i)
 	{
 		unsigned int x = pos_x[i * blockDim.x + threadIdx.x] / (size.x + h);	//x = x cordinate von min group
@@ -87,45 +88,72 @@ __global__ void sumbissionKernel(const int2 res, const int2 fields, uint4 *dev_a
 		}
 	}
 	__syncthreads();
-
 	if (threadIdx.x < AMOUNT_SM)
 	{
 		dev_areal[threadIdx.x] = areal[threadIdx.x];
 		dev_eInG[threadIdx.x] = eInG[threadIdx.x];
 	}
-	unsigned int maxE = 0;
+	__syncthreads();
+
 	if (threadIdx.x == 0)
 	{
+		uint32_t maxE = 0;
+		uint32_t idMax = -1;
+		uint32_t minE = 0;
+		uint32_t idMin = -1;
 		for (int i = 0; i < AMOUNT_SM; ++i)
-			if (eInG[i] > maxE)
-				maxE = eInG[i] > maxE;
+		{
+			if (eInG[i] > maxE || idMax < 0)
+			{
+				maxE = eInG[i];
+				idMax = i;
+			}
+			if (eInG[i] < minE || idMin < 0)
+			{
+				minE = eInG[i];
+				idMin = i;
+			}
+		}
+		if 1 *  
+		dim3 blocks(fields.x, fields.y);
+		calculateMovmentKernel << <blocks, 1024, 3 * maxE * sizeof(float)>> > (dev_eInG, dev_areal, H, dt, visc, d, g, pos_x, pos_y, vel_x, vel_y, posN_x, posN_y, velN_x, velN_y);
+		cudaError_t cudaStatus = cudaDeviceSynchronize();
+		if (cudaStatus != cudaSuccess)
+			printf("ERROR\n");
+		printf("%f\n", pos_x[0]);
 	}
-	__syncthreads();
-	dim3 blocks(fields.x, fields.y);
-	calculateMovmentKernel << <1024, blocks, 5 * maxE * sizeof(float) + maxE * sizeof(uint32_t)>> > (dev_eInG, dev_areal, H, dt, visc, d, g, pos_x, pos_y, vel_x, vel_y, posN_x, posN_y, velN_x, velN_y);
+
 }
 __global__ void calculateMovmentKernel(unsigned int *eInG, uint4* areal, const float H, const float dt, const float visc, const float d, const float g, float *pos_x, float *pos_y, float *vel_x, float *vel_y, float *posN_x, float *posN_y, float *velN_x, float *velN_y)
 {
-	extern __shared__ float *shared;
+	atomicAdd(pos_x, 0.1f);
+#ifdef AOA
+	extern __shared__ float shared[];
 	const unsigned int eInA= eInG[blockIdx.x];
-	float *pres;
-	float *s_pos_x = shared + eInA;
-	float *s_pos_y = shared + 2 * eInA;
-	float *s_vel_x = shared + 3 * eInA;
-	float *s_vel_y = shared + 4 * eInA;
-	uint32_t *id = (uint32_t*)(shared + 5 * eInA);
+	/*if (eInA == 0)
+	{
+		printf("jump %i\n", eInA);
+		return;
+	}*/
+	float *pres = shared + 1;
+	float *s_pos_x = shared +     eInA + 1;
+	float *s_pos_y = shared + 2 * eInA + 1;
+	float *s_vel_x = shared + 3 * eInA + 1;
+	float *s_vel_y = shared + 4 * eInA + 1;
+	uint32_t *pos = (uint32_t*)shared;
+	uint32_t *id = (uint32_t*)(shared + 5 * eInA + 1);
 	const float min = H / 30.f;
 	const float max = 100.f;
-	uint4 a = areal[blockIdx.x];
-	__shared__ unsigned int pos;
-	if (threadIdx.x == 0)
-		pos = -1;
+	uint4 a = areal[gridDim.x * blockIdx.y +  blockIdx.x];
+	*pos = 0;
+	__syncthreads();
 	for (unsigned int i = 0; i * blockDim.x + threadIdx.x < N; ++i)
 	{
+
 		if(pos_x[i * blockDim.x + threadIdx.x] > a.x && pos_x[i * blockDim.x + threadIdx.x] < (a.x + a.w))
 			if (pos_y[i * blockDim.x + threadIdx.x] > a.y && pos_y[i * blockDim.x + threadIdx.x] < (a.y + a.z))
 			{
-				unsigned int p = atomicAdd(&pos, 1);
+				uint32_t p = atomicAdd(pos, 1);
 				s_pos_x[p] = pos_x[i * blockDim.x + threadIdx.x];
 				s_pos_y[p] = pos_y[i * blockDim.x + threadIdx.x];
 				s_vel_x[p] = vel_x[i * blockDim.x + threadIdx.x];
@@ -136,10 +164,10 @@ __global__ void calculateMovmentKernel(unsigned int *eInG, uint4* areal, const f
 	__syncthreads();
 	float dxSq;
 	float2 dx;
-	for (unsigned int i = 0; i * blockDim.x + threadIdx.x <= pos; ++i)
+	for (unsigned int i = 0; i * blockDim.x + threadIdx.x < *pos; ++i)
 	{
 		pres[i * blockDim.x + threadIdx.x] = 0.f;
-		for (unsigned int j = 0; j <= pos; ++j)
+		for (unsigned int j = 0; j < *pos; ++j)
 		{
 			dx.x = s_pos_x[j] - s_pos_x[i * blockDim.x + threadIdx.x];
 			dx.y = s_pos_y[j] - s_pos_y[i * blockDim.x + threadIdx.x];
@@ -156,13 +184,13 @@ __global__ void calculateMovmentKernel(unsigned int *eInG, uint4* areal, const f
 	__syncthreads();
 	float2 dv = { 0.f, g };
 	float absDx;
-	for (unsigned int i = 0; i * blockDim.x + threadIdx.x <= pos; ++i)
+	for (unsigned int i = 0; i * blockDim.x + threadIdx.x < *pos; ++i)
 	{
 		int k = i * blockDim.x + threadIdx.x;
 		if (s_pos_x[k] > a.x + a.w - H && ! (blockIdx.x == gridDim.x - 1)
 			|| s_pos_y[k] > a.y + a.z - H && ! (blockIdx.y == gridDim.y - 1))	//if in border area and not end of screen
 				continue;
-		for (unsigned int j = 0; j <= pos; ++j)
+		for (unsigned int j = 0; j < *pos; ++j)
 		{
 			dx.x = s_pos_x[j] - s_pos_x[k];
 			dx.y = s_pos_y[j] - s_pos_y[k];
@@ -189,6 +217,7 @@ __global__ void calculateMovmentKernel(unsigned int *eInG, uint4* areal, const f
 				dv.x += dvel.x * visc / absDx;
 				dv.y += dvel.y * visc / absDx;
 			}
+
 		}
 		float dvSq = dv.x*dv.x + dv.y*dv.y;
 		if (dvSq > max*max)		//max speed
@@ -198,11 +227,13 @@ __global__ void calculateMovmentKernel(unsigned int *eInG, uint4* areal, const f
 			dv.x *= c;
 			dv.y *= c;
 		}
-		velN_x[id[k]] = s_vel_x[k] +(dv.x * dt);
-		velN_y[id[k]] = s_vel_y[k] + (dv.y * dt);
-		posN_x[id[k]] = s_pos_x[k] + (s_vel_x[k] * dt);
-		posN_y[id[k]] = s_pos_y[k] + (s_vel_x[k] * dt);
+		velN_x[id[k]] = s_vel_x[k];// +(dv.x * dt);
+		velN_y[id[k]] = s_vel_y[k];// +(dv.y * dt);
+		posN_x[id[k]] = s_pos_x[k];// +(s_vel_x[k] * dt);
+		posN_y[id[k]] = s_pos_y[k];// +(s_vel_x[k] * dt);
+
 	}
+#endif
 }
 cudaError_t fluidSimulation(const int2 res, const int2 fields, const float r, const float dt, const float visc, const float d, const float g, const int frames, float* pos_x, float* pos_y);
 int main()
@@ -214,7 +245,7 @@ int main()
 	const float visc = 0.2f;
 	const float d = 0.5f;
 	const float g = 9.8f;
-	const int frames = 100;
+	const int frames = 1;
 	float pos_x[N];
 	float pos_y[N];
 	float x = 0.f;
@@ -286,21 +317,26 @@ cudaError_t fluidSimulation(const int2 res, const int2 fields, const float r, co
 	cudaGetDeviceProperties(&devProp, 0);
 	printDeviceProps(devProp);
 
+	char c;
+	std::cout << "enter s to start: ";
+	do { std::cin >> c; } while (c != 's');
+
 	cudaError_t cudaStatus = cudaSetDevice(0);
 	if (cudaStatus != cudaSuccess) 
 	{
 		std::cerr << "cudaSetDevice failed!" << std::endl;
 	}
-	cudaMalloc((void**)dev_vel_x, N * sizeof(float));
-	cudaMalloc((void**)dev_vel_y, N * sizeof(float));
-	cudaMalloc((void**)dev_pos_x, N * sizeof(float));
-	cudaMalloc((void**)dev_pos_y, N * sizeof(float));
-	cudaMalloc((void**)dev_velN_x, N * sizeof(float));
-	cudaMalloc((void**)dev_velN_y, N * sizeof(float));
-	cudaMalloc((void**)dev_posN_x, N * sizeof(float));
-	cudaMalloc((void**)dev_posN_y, N * sizeof(float));
-	cudaMalloc((void**)dev_pic, pixel * sizeof(uint8_t));
-	cudaMalloc((void**)dev_areal, AMOUNT_SM * sizeof(uint4));
+	cudaMalloc((void**)&dev_vel_x, N * sizeof(float));
+	cudaMalloc((void**)&dev_vel_y, N * sizeof(float));
+	cudaMalloc((void**)&dev_pos_x, N * sizeof(float));
+	cudaMalloc((void**)&dev_pos_y, N * sizeof(float));
+	cudaMalloc((void**)&dev_velN_x, N * sizeof(float));
+	cudaMalloc((void**)&dev_velN_y, N * sizeof(float));
+	cudaMalloc((void**)&dev_posN_x, N * sizeof(float));
+	cudaMalloc((void**)&dev_posN_y, N * sizeof(float));
+	cudaMalloc((void**)&dev_pic, pixel * sizeof(uint8_t));
+	cudaMalloc((void**)&dev_areal, AMOUNT_SM * sizeof(uint4));
+	cudaMalloc((void**)&dev_eInG, AMOUNT_SM * sizeof(uint32_t));
 
 	cudaMemcpy(dev_pos_x, pos_x, N * sizeof(float), cudaMemcpyHostToDevice);
 	cudaMemcpy(dev_pos_y, pos_y, N * sizeof(float), cudaMemcpyHostToDevice);
@@ -319,7 +355,7 @@ cudaError_t fluidSimulation(const int2 res, const int2 fields, const float r, co
 
 
 	std::thread safePicThread;
-	const int STEPS_BETWEEN_FRAMES = 30;
+	const int STEPS_BETWEEN_FRAMES = 1;
 	float *dev_p, *dev_diff;		//field to save vel diff and presuare temp
 	for (size_t frame = 0; frame <= frames * STEPS_BETWEEN_FRAMES; ++frame)
 	{
@@ -339,7 +375,7 @@ cudaError_t fluidSimulation(const int2 res, const int2 fields, const float r, co
 		}
 #endif
 		//calculate 1 frame
-		sumbissionKernel << <MAX_THREADS_PER_BLOCK, 1 >> >
+		sumbissionKernel << <1, MAX_THREADS_PER_BLOCK >> >
 			(res, fields, dev_areal, dev_eInG, H, dt, visc, d, g,
 				dev_pos_x, dev_pos_y, dev_vel_x, dev_vel_y, dev_posN_x, dev_posN_y, dev_velN_x, dev_velN_y);
 
@@ -351,8 +387,11 @@ cudaError_t fluidSimulation(const int2 res, const int2 fields, const float r, co
 		std::swap(dev_posN_y, dev_pos_y);
 		std::swap(dev_velN_x, dev_vel_x);
 		std::swap(dev_velN_y, dev_vel_y);
+		char c;
+		std::cin >> c;
 	}
-	safePicThread.join();
+	if(safePicThread.joinable())
+		safePicThread.join();
 	cudaFree(dev_vel_x);
 	cudaFree(dev_vel_y);
 	cudaFree(dev_pos_x);
